@@ -25,7 +25,6 @@ Then search for **Synthos Batch Uploader** in the package list and click **Insta
 ## How to Open
 
 - **Unity Menu Bar:** `Tools > Synthos > Batch Uploader` or `Window > Synthos > Batch Uploader`
-- **Legacy Shortcut:** `Tools > Batch Uploader`
 
 ## How to Use
 

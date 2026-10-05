@@ -101,7 +101,6 @@ namespace Synthos.BatchUploader
         // ============================================================
         [MenuItem("Window/Synthos/Batch Uploader", priority = 40)]
         [MenuItem("Tools/Synthos/Batch Uploader", priority = 40)]
-        [MenuItem("Tools/Batch Uploader", priority = 200)]
         public static void ShowWindow()
         {
             var w = GetWindow<OutfitBatchUploader>("Batch Uploader");
