@@ -1,0 +1,30 @@
+{
+  "name": "com.synthos.batch-uploader",
+  "displayName": "Synthos Outfit Batch Uploader",
+  "version": "1.0.0",
+  "type": "avatar",
+  "unity": "2022.3",
+  "description": "Automates batch uploading multiple VRChat avatar outfits with multi-platform synchronization (PC, Android, iOS), blendshape offsets, material overrides, and blueprint ID management.",
+  "author": {
+    "name": "Synthos (Original by TheSilentD3ath / Shiro)",
+    "url": "https://github.com/GRIMREAPER35487/VRC-Batch-Uploader"
+  },
+  "keywords": [
+    "vrchat",
+    "avatar",
+    "avatars",
+    "batch",
+    "upload",
+    "outfit",
+    "outfits",
+    "multiplatform",
+    "android",
+    "ios"
+  ],
+  "dependencies": {
+    "com.vrchat.avatars": ">=3.5.0"
+  },
+  "vpmDependencies": {
+    "com.vrchat.avatars": ">=3.5.0"
+  }
+}
