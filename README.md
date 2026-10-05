@@ -60,7 +60,7 @@ Then search for **Synthos Batch Uploader** in the package list and click **Insta
 ## Credits & Acknowledgments
 
 - **Upstream Project:** Forked from and based on [TheSilentD3ath/VRChat-outfit-batch-uploader](https://github.com/TheSilentD3ath/VRChat-outfit-batch-uploader) (MIT License).
-- **Enhancements:** Extended by Synthos with multi-platform linking (Android/iOS), material overrides, domain reload survival, and VPM package automation.
+- **Enhancements:** Extended by Synthos.
 
 ## License
 
