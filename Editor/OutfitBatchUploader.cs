@@ -99,8 +99,8 @@ namespace Synthos.BatchUploader
         private bool     _stylesInited;
 
         // ============================================================
-        [MenuItem("Window/Synthos/Outfit Batch Uploader", priority = 40)]
-        [MenuItem("Tools/Synthos/Outfit Batch Uploader", priority = 40)]
+        [MenuItem("Window/Synthos/Batch Uploader", priority = 40)]
+        [MenuItem("Tools/Synthos/Batch Uploader", priority = 40)]
         [MenuItem("Tools/Batch Uploader", priority = 200)]
         public static void ShowWindow()
         {
@@ -2572,8 +2572,8 @@ namespace Synthos.BatchUploader
             SessionState.SetBool(MigrationPromptedKey, true);
 
             bool remove = EditorUtility.DisplayDialog(
-                "Synthos Outfit Batch Uploader",
-                "Synthos Outfit Batch Uploader is now active as a modern package.\n\n" +
+                "Synthos Batch Uploader",
+                "Synthos Batch Uploader is now active as a modern package.\n\n" +
                 "A legacy script folder was detected at 'Assets/VRC_Batch_Uploader'.\n\n" +
                 "All your outfit configs (Blueprint IDs, blendshapes, materials) are safely preserved in 'ProjectSettings/VRC_Batch_Uploader' and will not be affected.\n\n" +
                 "Would you like to delete the redundant 'Assets/VRC_Batch_Uploader' folder now?",

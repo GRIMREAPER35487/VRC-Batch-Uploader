@@ -16,7 +16,7 @@ Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets,
 
 ## How to Open
 
-- **Unity Menu Bar:** `Tools > Synthos > Outfit Batch Uploader` or `Window > Synthos > Outfit Batch Uploader`
+- **Unity Menu Bar:** `Tools > Synthos > Batch Uploader` or `Window > Synthos > Batch Uploader`
 - **Legacy Shortcut:** `Tools > Batch Uploader`
 
 ## Installation via VPM (VRChat Creator Companion / ALCOM)
