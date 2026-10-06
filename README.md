@@ -105,6 +105,12 @@ https://grimreaper35487.github.io/Synthos-VRC-Packages/index.json
 ```
 Then search for **Synthos Batch Uploader** in the package list and click **Install**.
 
+## What's Next
+
+Currently in development for upcoming releases:
+- **Sound on Error:** An audible alert tone that plays immediately if an avatar encounters a build or upload error.
+- **Proceed & Warn on Error:** An option to log a warning and continue uploading the rest of the queue if an avatar fails, preventing a single failure from halting an entire unattended batch.
+
 ## Credits & Acknowledgments
 
 - **Upstream Project:** Forked from and based on [TheSilentD3ath/VRChat-outfit-batch-uploader](https://github.com/TheSilentD3ath/VRChat-outfit-batch-uploader) (MIT License).
