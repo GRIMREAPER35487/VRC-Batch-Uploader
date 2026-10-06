@@ -1253,33 +1253,30 @@ namespace Synthos.BatchUploader
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField("Batch Upload", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("Batch Upload", EditorStyles.boldLabel, GUILayout.Width(95));
                 GUILayout.FlexibleSpace();
 
                 EditorGUI.BeginChangeCheck();
                 var resetContent = new GUIContent("Reset to 1st outfit", "Resets avatar to the first outfit in the list when batch uploads complete.");
-                _resetToFirstOutfit = EditorGUILayout.ToggleLeft(resetContent, _resetToFirstOutfit, GUILayout.Width(130));
+                _resetToFirstOutfit = EditorGUILayout.ToggleLeft(resetContent, _resetToFirstOutfit, GUILayout.Width(125));
                 if (EditorGUI.EndChangeCheck())
                     EditorPrefs.SetBool(PREFS_RESET_TO_FIRST, _resetToFirstOutfit);
 
                 EditorGUI.BeginChangeCheck();
-                var soundContent = new GUIContent("Sound", "Play completion chime when uploads finish.");
-                _soundEnabled = EditorGUILayout.ToggleLeft(soundContent, _soundEnabled, GUILayout.Width(75));
-                if (EditorGUI.EndChangeCheck())
-                    EditorPrefs.SetBool(PREFS_SOUND_ENABLED, _soundEnabled);
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUI.BeginChangeCheck();
                 var proceedContent = new GUIContent("Proceed on error", "If an outfit fails, log a warning and continue uploading the rest of the queue instead of halting the batch.");
-                _proceedOnError = EditorGUILayout.ToggleLeft(proceedContent, _proceedOnError, GUILayout.Width(135));
+                _proceedOnError = EditorGUILayout.ToggleLeft(proceedContent, _proceedOnError, GUILayout.Width(120));
                 if (EditorGUI.EndChangeCheck())
                     EditorPrefs.SetBool(PREFS_PROCEED_ON_ERROR, _proceedOnError);
 
                 EditorGUI.BeginChangeCheck();
-                var errSoundContent = new GUIContent("Error sound", "Play an audible alert tone immediately if an avatar encounters a build or upload error.");
-                _errorSoundEnabled = EditorGUILayout.ToggleLeft(errSoundContent, _errorSoundEnabled, GUILayout.Width(110));
+                var soundContent = new GUIContent("Play Sound on Finish", "Play completion chime when uploads finish.");
+                _soundEnabled = EditorGUILayout.ToggleLeft(soundContent, _soundEnabled, GUILayout.Width(145));
+                if (EditorGUI.EndChangeCheck())
+                    EditorPrefs.SetBool(PREFS_SOUND_ENABLED, _soundEnabled);
+
+                EditorGUI.BeginChangeCheck();
+                var errSoundContent = new GUIContent("Play Sound on Error", "Play an audible alert tone immediately if an avatar encounters a build or upload error.");
+                _errorSoundEnabled = EditorGUILayout.ToggleLeft(errSoundContent, _errorSoundEnabled, GUILayout.Width(140));
                 if (EditorGUI.EndChangeCheck())
                     EditorPrefs.SetBool(PREFS_ERROR_SOUND_ENABLED, _errorSoundEnabled);
             }
@@ -1919,24 +1916,35 @@ namespace Synthos.BatchUploader
             return null;
         }
 
-        private void PlayErrorSound()
+        private async void PlayErrorSound(int repeatCount = 2)
         {
             if (!_errorSoundEnabled) return;
 
             var clip = GetErrorSoundClip();
-            bool played = false;
-            if (clip != null)
-            {
-                played = PlayClipViaAudioUtil(clip);
-            }
+            int delayMs = clip != null ? Mathf.RoundToInt(clip.length * 1000f) + 50 : 350;
 
-            if (!played)
+            for (int i = 0; i < repeatCount; i++)
             {
-                try
+                if (i > 0)
                 {
-                    EditorApplication.Beep();
+                    await Task.Delay(delayMs);
+                    if (!_errorSoundEnabled) return;
                 }
-                catch { }
+
+                bool played = false;
+                if (clip != null)
+                {
+                    played = PlayClipViaAudioUtil(clip);
+                }
+
+                if (!played)
+                {
+                    try
+                    {
+                        EditorApplication.Beep();
+                    }
+                    catch { }
+                }
             }
         }
 
