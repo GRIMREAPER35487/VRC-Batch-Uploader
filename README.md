@@ -110,6 +110,16 @@ Then search for **Synthos Batch Uploader** in the package list and click **Insta
 Currently in development for upcoming releases:
 - **Sound on Error:** An audible alert tone that plays immediately if an avatar encounters a build or upload error.
 - **Proceed & Warn on Error:** An option to log a warning and continue uploading the rest of the queue if an avatar fails, preventing a single failure from halting an entire unattended batch.
+- **New Outfit Setup (Express & Advanced Modes):** Streamlines setting up and uploading brand-new outfits that don't have a Blueprint ID yet, removing the need to manually unbind blueprints, copy IDs, or set tags.
+  - **Express Setup:** A one-click automated path that clears the `PipelineManager` Blueprint ID (so the VRChat SDK registers a fresh avatar), applies template defaults (name, description, release status, content warnings), auto-captures a thumbnail, optionally accepts SDK auto-fixes, builds and uploads the new avatar, and writes the newly assigned Blueprint ID directly back into the tool.
+  - **Advanced Setup:** Follows the same automated pipeline, but allows reviewing and overriding the name, description, content warning tags, release status, and thumbnail per outfit before building.
+  - **Global Defaults Configuration:** Configured once and saved across sessions:
+    - **Name & Description Templates:** Dynamic string templates supporting `{outfit}` and `{avatar}` tokens.
+    - **Release Status:** Default to Public or Private.
+    - **Content Warning Tags:** Automatically configures VRChat's five content tags (*Sexually Suggestive*, *Adult Language and Themes*, *Graphic Violence*, *Excessive Gore*, *Extreme Horror*).
+    - **Auto-Detect SPS/DPS:** Automatically flags the *Sexually Suggestive* tag if SPS (VRCFury Haptic Plug/Socket) or DPS components are detected on the avatar.
+    - **Thumbnail Automation:** Uses a fixed default image or automatically renders a capture from a scene camera against a solid background color.
+    - **Auto-Accept SDK Fixes:** Automatically applies the VRChat SDK's proposed build fixes, surviving script recompilations / domain reloads when the editor settles.
 
 ## Credits & Acknowledgments
 
