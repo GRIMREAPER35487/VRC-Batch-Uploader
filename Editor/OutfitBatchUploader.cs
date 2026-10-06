@@ -44,21 +44,26 @@ namespace Synthos.BatchUploader
         private const string PREFS_PREFIX            = "ShiroOutfitUploader_";
         private const string PREFS_PARENT_NAME       = "ShiroOutfitUploader_OutfitsParentName";
         private const string PREFS_SOUND_ENABLED     = "ShiroOutfitUploader_SoundEnabled";
+        private const string PREFS_ERROR_SOUND_ENABLED = "ShiroOutfitUploader_ErrorSoundEnabled";
+        private const string PREFS_PROCEED_ON_ERROR  = "ShiroOutfitUploader_ProceedOnError";
         private const string PREFS_RESET_TO_FIRST    = "ShiroOutfitUploader_ResetToFirst";
         private const string PREFS_UPLOAD_MODE       = "ShiroOutfitUploader_UploadMode";
         private const string PREFS_LINK_ANDROID_IOS  = "ShiroOutfitUploader_LinkAndroidIOS";
         private const string DEFAULT_PARENT_NAME     = "Outfits";
         private const string SOUND_ASSET_PATH        = "Assets/VRC_Batch_Uploader/Editor/Sounds/UI Confirm Sound.mp3";
+        private const string SOUND_ERROR_ASSET_PATH  = "Assets/VRC_Batch_Uploader/Editor/Sounds/UI Error Sound.wav";
 
-        private const string SESSION_BATCH_ACTIVE = "Shiro_BatchActive";
-        private const string SESSION_BATCH_QUEUE  = "Shiro_BatchQueue";
-        private const string SESSION_BATCH_TOTAL  = "Shiro_BatchTotal";
-        private const string SESSION_BATCH_INDEX  = "Shiro_BatchIndex";
-        private const string SESSION_SKIPPED      = "Shiro_BatchSkipped";
+        private const string SESSION_BATCH_ACTIVE     = "Shiro_BatchActive";
+        private const string SESSION_BATCH_QUEUE      = "Shiro_BatchQueue";
+        private const string SESSION_BATCH_TOTAL      = "Shiro_BatchTotal";
+        private const string SESSION_BATCH_INDEX      = "Shiro_BatchIndex";
+        private const string SESSION_SKIPPED          = "Shiro_BatchSkipped";
         private const string SESSION_INITIAL_PLATFORM = "Shiro_InitialPlatform";
         private const string SESSION_FINAL_STATUS_MSG = "Shiro_FinalStatusMsg";
         private const string SESSION_FINAL_STATUS_TYPE = "Shiro_FinalStatusType";
         private const string SESSION_PLAY_SOUND_ON_WAKE = "Shiro_PlaySoundOnWake";
+        private const string SESSION_PLAY_ERROR_SOUND_ON_WAKE = "Shiro_PlayErrorSoundOnWake";
+        private const string SESSION_PROCEED_ON_ERROR   = "Shiro_ProceedOnError";
         private const string SESSION_RESET_ON_WAKE      = "Shiro_ResetToFirstOnWake";
         private const string SESSION_BATCH_VERSION     = "Shiro_BatchVersion";
         private const string SESSION_IS_DIRECT_UPLOAD   = "Shiro_IsDirectUpload";
@@ -83,6 +88,8 @@ namespace Synthos.BatchUploader
         private string               _outfitsParentName = DEFAULT_PARENT_NAME;
         private Vector2              _scroll;
         private bool               _soundEnabled;
+        private bool               _errorSoundEnabled = true;
+        private bool               _proceedOnError;
         private bool               _isBatchUploading;
         private int                _batchIndex;
         private int                _batchTotal;
@@ -111,8 +118,10 @@ namespace Synthos.BatchUploader
         private void OnEnable()
         {
             titleContent = new GUIContent("Batch Uploader");
-            _outfitsParentName = EditorPrefs.GetString(PREFS_PARENT_NAME, DEFAULT_PARENT_NAME);
-            _soundEnabled      = EditorPrefs.GetBool(PREFS_SOUND_ENABLED, true);
+            _outfitsParentName  = EditorPrefs.GetString(PREFS_PARENT_NAME, DEFAULT_PARENT_NAME);
+            _soundEnabled       = EditorPrefs.GetBool(PREFS_SOUND_ENABLED, true);
+            _errorSoundEnabled  = EditorPrefs.GetBool(PREFS_ERROR_SOUND_ENABLED, true);
+            _proceedOnError     = EditorPrefs.GetBool(PREFS_PROCEED_ON_ERROR, false);
             _resetToFirstOutfit = EditorPrefs.GetBool(PREFS_RESET_TO_FIRST, true);
             ScanScene();
             EditorSceneManager.sceneOpened += OnSceneOpened;
@@ -125,7 +134,10 @@ namespace Synthos.BatchUploader
                 EditorApplication.update += HandleResumeBatch;
             }
             // Check for a finished batch status after a domain reload
-            else if (SessionState.GetBool(SESSION_PLAY_SOUND_ON_WAKE, false) || !string.IsNullOrEmpty(SessionState.GetString(SESSION_FINAL_STATUS_MSG, "")) || SessionState.GetBool(SESSION_RESET_ON_WAKE, false))
+            else if (SessionState.GetBool(SESSION_PLAY_SOUND_ON_WAKE, false) ||
+                     SessionState.GetBool(SESSION_PLAY_ERROR_SOUND_ON_WAKE, false) ||
+                     !string.IsNullOrEmpty(SessionState.GetString(SESSION_FINAL_STATUS_MSG, "")) ||
+                     SessionState.GetBool(SESSION_RESET_ON_WAKE, false))
             {
                 EditorApplication.update += HandleFinishedBatch;
             }
@@ -209,6 +221,12 @@ namespace Synthos.BatchUploader
             {
                 PlayConfirmSound();
                 SessionState.EraseBool(SESSION_PLAY_SOUND_ON_WAKE);
+            }
+
+            if (SessionState.GetBool(SESSION_PLAY_ERROR_SOUND_ON_WAKE, false))
+            {
+                PlayErrorSound();
+                SessionState.EraseBool(SESSION_PLAY_ERROR_SOUND_ON_WAKE);
             }
     
             Repaint();
@@ -1240,14 +1258,30 @@ namespace Synthos.BatchUploader
 
                 EditorGUI.BeginChangeCheck();
                 var resetContent = new GUIContent("Reset to 1st outfit", "Resets avatar to the first outfit in the list when batch uploads complete.");
-                _resetToFirstOutfit = EditorGUILayout.ToggleLeft(resetContent, _resetToFirstOutfit, GUILayout.Width(135));
+                _resetToFirstOutfit = EditorGUILayout.ToggleLeft(resetContent, _resetToFirstOutfit, GUILayout.Width(130));
                 if (EditorGUI.EndChangeCheck())
                     EditorPrefs.SetBool(PREFS_RESET_TO_FIRST, _resetToFirstOutfit);
 
                 EditorGUI.BeginChangeCheck();
-                _soundEnabled = EditorGUILayout.ToggleLeft("🔔 Sound", _soundEnabled, GUILayout.Width(75));
+                var soundContent = new GUIContent("Sound", "Play completion chime when uploads finish.");
+                _soundEnabled = EditorGUILayout.ToggleLeft(soundContent, _soundEnabled, GUILayout.Width(75));
                 if (EditorGUI.EndChangeCheck())
                     EditorPrefs.SetBool(PREFS_SOUND_ENABLED, _soundEnabled);
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUI.BeginChangeCheck();
+                var proceedContent = new GUIContent("Proceed on error", "If an outfit fails, log a warning and continue uploading the rest of the queue instead of halting the batch.");
+                _proceedOnError = EditorGUILayout.ToggleLeft(proceedContent, _proceedOnError, GUILayout.Width(135));
+                if (EditorGUI.EndChangeCheck())
+                    EditorPrefs.SetBool(PREFS_PROCEED_ON_ERROR, _proceedOnError);
+
+                EditorGUI.BeginChangeCheck();
+                var errSoundContent = new GUIContent("Error sound", "Play an audible alert tone immediately if an avatar encounters a build or upload error.");
+                _errorSoundEnabled = EditorGUILayout.ToggleLeft(errSoundContent, _errorSoundEnabled, GUILayout.Width(110));
+                if (EditorGUI.EndChangeCheck())
+                    EditorPrefs.SetBool(PREFS_ERROR_SOUND_ENABLED, _errorSoundEnabled);
             }
             EditorGUILayout.LabelField(
                 $"{ready} outfit(s) ready  (have a Blueprint ID + \"Include in batch\" checked)",
@@ -1552,7 +1586,7 @@ namespace Synthos.BatchUploader
             Undo.CollapseUndoOperations(group);
             EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
 
-            SetStatus($"✓ Activated: {target.Name}", MessageType.Info);
+            SetStatus($"Activated: {target.Name}", MessageType.Info);
             Repaint();
         }
 
@@ -1804,7 +1838,37 @@ namespace Synthos.BatchUploader
             SaveOutfitSettings(entry);
         }
 
-        // ---- Confirm sound ----
+        // ---- Sound playback ----
+        private static bool PlayClipViaAudioUtil(AudioClip clip)
+        {
+            if (clip == null) return false;
+            try
+            {
+                var audioUtil  = typeof(AudioImporter).Assembly.GetType("UnityEditor.AudioUtil");
+                var playMethod = audioUtil?.GetMethod(
+                    "PlayPreviewClip",
+                    BindingFlags.Static | BindingFlags.Public,
+                    null,
+                    new[] { typeof(AudioClip), typeof(int), typeof(bool) },
+                    null);
+
+                if (playMethod != null)
+                {
+                    playMethod.Invoke(null, new object[] { clip, 0, false });
+                    return true;
+                }
+                else
+                {
+                    Debug.LogWarning("[OutfitBatchUploader] PlayPreviewClip not found — Unity may have renamed it.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[OutfitBatchUploader] Could not play audio clip: " + ex.Message);
+            }
+            return false;
+        }
+
         private static AudioClip GetConfirmSoundClip()
         {
             var clip = AssetDatabase.LoadAssetAtPath<AudioClip>("Packages/com.synthos.batch-uploader/Editor/Sounds/UI Confirm Sound.mp3");
@@ -1834,25 +1898,45 @@ namespace Synthos.BatchUploader
                 return;
             }
 
-            // Unity 2022 internal audio preview — reached via reflection since AudioUtil is not public
-            try
-            {
-                var audioUtil  = typeof(AudioImporter).Assembly.GetType("UnityEditor.AudioUtil");
-                var playMethod = audioUtil?.GetMethod(
-                    "PlayPreviewClip",
-                    BindingFlags.Static | BindingFlags.Public,
-                    null,
-                    new[] { typeof(AudioClip), typeof(int), typeof(bool) },
-                    null);
+            PlayClipViaAudioUtil(clip);
+        }
 
-                if (playMethod != null)
-                    playMethod.Invoke(null, new object[] { clip, 0, false });
-                else
-                    Debug.LogWarning("[OutfitBatchUploader] PlayPreviewClip not found — Unity may have renamed it.");
-            }
-            catch (Exception ex)
+        private static AudioClip GetErrorSoundClip()
+        {
+            var clip = AssetDatabase.LoadAssetAtPath<AudioClip>("Packages/com.synthos.batch-uploader/Editor/Sounds/UI Error Sound.wav");
+            if (clip != null) return clip;
+
+            clip = AssetDatabase.LoadAssetAtPath<AudioClip>("Assets/VRC_Batch_Uploader/Editor/Sounds/UI Error Sound.wav");
+            if (clip != null) return clip;
+
+            string[] guids = AssetDatabase.FindAssets("UI Error Sound t:AudioClip");
+            if (guids != null && guids.Length > 0)
             {
-                Debug.LogWarning("[OutfitBatchUploader] Could not play confirm sound: " + ex.Message);
+                string path = AssetDatabase.GUIDToAssetPath(guids[0]);
+                return AssetDatabase.LoadAssetAtPath<AudioClip>(path);
+            }
+
+            return null;
+        }
+
+        private void PlayErrorSound()
+        {
+            if (!_errorSoundEnabled) return;
+
+            var clip = GetErrorSoundClip();
+            bool played = false;
+            if (clip != null)
+            {
+                played = PlayClipViaAudioUtil(clip);
+            }
+
+            if (!played)
+            {
+                try
+                {
+                    EditorApplication.Beep();
+                }
+                catch { }
             }
         }
 
@@ -1967,6 +2051,7 @@ namespace Synthos.BatchUploader
 
             if (!VRCSdkControlPanel.TryGetBuilder<IVRCSdkAvatarBuilderApi>(out var builder))
             {
+                PlayErrorSound();
                 SetStatus("VRC SDK builder not available — open the VRChat SDK window first.", MessageType.Error);
                 return;
             }
@@ -1974,6 +2059,7 @@ namespace Synthos.BatchUploader
             // NEW: Check for login before starting
             if (!APIUser.IsLoggedIn)
             {
+                PlayErrorSound();
                 SetStatus("Not logged in. Please open the VRChat SDK Control Panel and log in first.", MessageType.Error);
                 return;
             }
@@ -2031,6 +2117,7 @@ namespace Synthos.BatchUploader
             SessionState.SetInt(SESSION_BATCH_INDEX, 0);
             SessionState.SetBool(SESSION_BATCH_ACTIVE, true);
             SessionState.SetBool(SESSION_IS_DIRECT_UPLOAD, isDirectUpload);
+            SessionState.SetBool(SESSION_PROCEED_ON_ERROR, _proceedOnError);
             SessionState.SetString(SESSION_SKIPPED, "");
             SessionState.SetString(SESSION_INITIAL_PLATFORM, currentPlatform.ToString());
             SessionState.SetString(SESSION_BATCH_VERSION, _avatarVersion); // Capture the version from UI
@@ -2190,10 +2277,26 @@ namespace Synthos.BatchUploader
             string shortMsg = ex.Message.Length > 120 ? ex.Message.Substring(0, 120) + "…" : ex.Message;
             string logMsg   = $"[OutfitBatchUploader] '{outfitName}' ({platform}) failed: {ex}";
 
+            PlayErrorSound();
+
+            bool isDirectUpload = SessionState.GetBool(SESSION_IS_DIRECT_UPLOAD, false);
+            bool proceedOnError = SessionState.GetBool(SESSION_PROCEED_ON_ERROR, _proceedOnError);
+
             if (isValidation)
             {
                 Debug.LogWarning(logMsg);
-                SetStatus($"⚠ Skipped {outfitName} — validation error (see Console)", MessageType.Warning);
+                SetStatus($"Skipped {outfitName} — validation error (see Console)", MessageType.Warning);
+
+                string skipped = SessionState.GetString(SESSION_SKIPPED, "");
+                skipped += $"{outfitName} ({platform})\n";
+                SessionState.SetString(SESSION_SKIPPED, skipped);
+
+                PopQueueAndContinue(queue);
+            }
+            else if (proceedOnError && !isDirectUpload)
+            {
+                Debug.LogWarning(logMsg);
+                SetStatus($"Skipped {outfitName} ({platform}) — error: {shortMsg}", MessageType.Warning);
 
                 string skipped = SessionState.GetString(SESSION_SKIPPED, "");
                 skipped += $"{outfitName} ({platform})\n";
@@ -2206,15 +2309,29 @@ namespace Synthos.BatchUploader
                 Debug.LogError(logMsg);
                 SetStatus($"Error on {outfitName}: {shortMsg}", MessageType.Error);
 
+                if (isDirectUpload)
+                {
+                    CancelBatch();
+                    return;
+                }
+
                 bool cont = EditorUtility.DisplayDialog(
                     "Upload Failed",
                     $"Upload failed for '{outfitName}' on {platform}:\n{shortMsg}\n\nContinue with remaining queue?",
                     "Continue", "Stop");
 
                 if (cont)
+                {
+                    string skipped = SessionState.GetString(SESSION_SKIPPED, "");
+                    skipped += $"{outfitName} ({platform})\n";
+                    SessionState.SetString(SESSION_SKIPPED, skipped);
+
                     PopQueueAndContinue(queue);
+                }
                 else
+                {
                     CancelBatch();
+                }
             }
         }
 
@@ -2245,7 +2362,7 @@ namespace Synthos.BatchUploader
                 : $"Queue complete — {succeeded}/{total} uploads finished.";
             if (skippedList.Length > 0)
             {
-                summary += $"\n\nSkipped ({skippedList.Length}) due to validation errors:\n• " +
+                summary += $"\n\nSkipped / Failed ({skippedList.Length}):\n• " +
                            string.Join("\n• ", skippedList) +
                            "\n\nFix the issues on those outfits and upload them separately.";
             }
@@ -2257,6 +2374,10 @@ namespace Synthos.BatchUploader
             if (succeeded > 0 && succeeded == total)
             {
                 SessionState.SetBool(SESSION_PLAY_SOUND_ON_WAKE, true);
+            }
+            else if (succeeded < total)
+            {
+                SessionState.SetBool(SESSION_PLAY_ERROR_SOUND_ON_WAKE, true);
             }
 
             RestoreBlendshapeSnapshot();
