@@ -169,21 +169,35 @@ namespace Synthos.BatchUploader
         // ============================================================
         //  GUI - drawn from OnGUI via DrawNewOutfitSetupSection()
         // ============================================================
-        private void DrawNewOutfitSetupSection()
+        private void DrawNewOutfitSetupSection(bool standalone = false)
         {
             LoadNewSetupDefaults();
 
             int newCount = _outfits.Count(o => o.Go != null && string.IsNullOrWhiteSpace(o.BlueprintId));
 
-            _nsSectionExpanded = EditorGUILayout.Foldout(
-                _nsSectionExpanded,
-                newCount > 0
-                    ? $"New Outfit Defaults  ({newCount} outfit(s) need setup - use Express/Advanced on each above)"
-                    : "New Outfit Defaults",
-                true, EditorStyles.foldoutHeader);
+            if (!standalone)
+            {
+                _nsSectionExpanded = EditorGUILayout.Foldout(
+                    _nsSectionExpanded,
+                    newCount > 0
+                        ? $"New Outfit Defaults  ({newCount} outfit(s) need setup - use Express/Advanced on each above)"
+                        : "New Outfit Defaults",
+                    true, EditorStyles.foldoutHeader);
 
-            if (!_nsSectionExpanded) return;
+                if (!_nsSectionExpanded) return;
+            }
+            else
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("New Outfit Defaults", EditorStyles.boldLabel);
+                    GUILayout.FlexibleSpace();
+                    if (newCount > 0)
+                        EditorGUILayout.LabelField($"{newCount} need setup", EditorStyles.miniLabel, GUILayout.Width(92));
+                }
+            }
 
+            _nsDefaultsScroll = EditorGUILayout.BeginScrollView(_nsDefaultsScroll, GUILayout.ExpandHeight(true));
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
                 EditorGUILayout.HelpBox(
@@ -193,6 +207,7 @@ namespace Synthos.BatchUploader
 
                 DrawDefaultsConfig();
             }
+            EditorGUILayout.EndScrollView();
         }
 
         private void DrawDefaultsConfig()
