@@ -17,7 +17,7 @@ Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets,
 > **Stop Maintaining Duplicate Projects or Desynced Avatar Versions:**
 > Traditionally, managing multiple avatar editions meant duplicating your avatar across multiple scenes or maintaining entirely separate, disk-heavy Unity projects. Whenever you tweaked a PhysBone, fixed a weight paint issue, improved a facial gesture, or updated a base texture, you had to painstakingly repeat that manual update across every single version.
 >
-> With Synthos Batch Uploader, you maintain **one single base avatar in one project**. Any improvement you make to the base body, bones, or animations immediately benefits every configuration. You no longer have to manually sync settings between different avatar versions—just click **Batch Upload All**, and the tool automatically cycles through each configuration, applies its unique blendshapes, swaps materials, assigns its Blueprint ID, and uploads it across PC, Android, and iOS in one automated run.
+> Synthos Batch Uploader lets you maintain a **single** base avatar for multiple outfits or variants. Changes made to the base mesh, armature, or animations automatically carry over to every setup. During a build, the tool iterates through each configured outfit, applies its blendshapes, material overrides, and Blueprint ID, and builds across PC, Android, and iOS in sequence.
 
 ## Built for Speed: Smart Platform Grouping
 
