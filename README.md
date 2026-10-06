@@ -14,7 +14,10 @@ Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets,
 > - **Colorway & Art Style Themes:** Swap full material palettes (dark/light themes, cel-shaded vs. realistic) without duplicating the base model.
 > - **Tiered Editions:** Build Public vs. Private avatar releases with different accessories enabled or stripped.
 >
-> All of these can be treated as separate configurations living on a single base avatar in one scene!
+> **Stop Maintaining Duplicate Projects or Desynced Avatar Versions:**
+> Traditionally, managing multiple avatar editions meant duplicating your avatar across multiple scenes or maintaining entirely separate, disk-heavy Unity projects. Whenever you tweaked a PhysBone, fixed a weight paint issue, improved a facial gesture, or updated a base texture, you had to painstakingly repeat that manual update across every single version.
+>
+> With Synthos Batch Uploader, you maintain **one single base avatar in one project**. Any improvement you make to the base body, bones, or animations immediately benefits every configuration. You no longer have to manually sync settings between different avatar versions—just click **Batch Upload All**, and the tool automatically cycles through each configuration, applies its unique blendshapes, swaps materials, assigns its Blueprint ID, and uploads it across PC, Android, and iOS in one automated run.
 
 ## Features
 
