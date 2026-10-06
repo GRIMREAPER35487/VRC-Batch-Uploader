@@ -7,6 +7,15 @@ A comprehensive Unity Editor workflow automation suite for VRChat avatar creator
 
 Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets, per-slot material overrides, and seamless cross-platform batch uploads without manual intervention.
 
+> [!TIP]
+> **Beyond Outfits — Thinking in "Avatar Configurations":** While designed and named around outfits, each entry is fundamentally a modular **Avatar Configuration**. Because each entry independently controls GameObject hierarchy branches, a unique Blueprint ID, custom body blendshape offsets, and per-slot material overrides, you can use it for far more than clothing:
+> - **Hairstyle & Gear Loadouts:** Switch different hairstyles, hats, armor, weapons, or accessory combinations.
+> - **Body Proportion Presets:** Maintain different body variants (chibi, tall, petite, athletic) via captured blendshapes.
+> - **Colorway & Art Style Themes:** Swap full material palettes (dark/light themes, cel-shaded vs. realistic) without duplicating the base model.
+> - **Tiered Editions:** Build Public vs. Private avatar releases with different accessories enabled or stripped.
+>
+> All of these can be treated as separate configurations living on a single base avatar in one scene!
+
 ## Features
 
 - **Multi-Platform Batch Synchronization:** Supports both **Single Avatar** mode (for single-model workflows) and **Same Project** mode (synchronizing separate PC, Android, and iOS avatar roots within the same scene). Automatically links and synchronizes Android & iOS target configurations to avoid redundant setup.
@@ -31,7 +40,7 @@ Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets,
 ## How to Use
 
 ### 1. Scene Setup
-1. Under your avatar root, ensure all outfit GameObjects are placed as direct children under a single container GameObject (named **`Outfits`** by default).
+1. Under your avatar root, ensure all outfit or configuration GameObjects are placed as direct children under a single container GameObject (named **`Outfits`** by default). Each child can represent an outfit, hairstyle variant, accessory loadout, or full avatar configuration.
 2. If using **Same Project** mode for cross-platform uploads, have your PC, Android, and/or iOS avatar roots in the same scene.
 
 ### 2. Opening the Tool
