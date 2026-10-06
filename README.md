@@ -18,9 +18,18 @@ Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets,
 > Traditionally, managing multiple avatar editions meant duplicating your avatar across multiple scenes or maintaining entirely separate, disk-heavy Unity projects. Whenever you tweaked a PhysBone, fixed a weight paint issue, improved a facial gesture, or updated a base texture, you had to painstakingly repeat that manual update across every single version.
 >
 > With Synthos Batch Uploader, you maintain **one single base avatar in one project**. Any improvement you make to the base body, bones, or animations immediately benefits every configuration. You no longer have to manually sync settings between different avatar versions—just click **Batch Upload All**, and the tool automatically cycles through each configuration, applies its unique blendshapes, swaps materials, assigns its Blueprint ID, and uploads it across PC, Android, and iOS in one automated run.
->
-> **Dramatically Faster Than Manual Uploads:**
-> Switching Unity's build target (Windows ↔ Android ↔ iOS) forces heavy asset re-imports and shader recompilations that can take several minutes each time. If you upload manually, you are often forced to switch platforms back and forth between outfits, wasting hours babysitting progress bars. Synthos Batch Uploader eliminates this by organizing the queue by platform: it uploads **all Windows avatars first**, switches platform **only once** to upload **all Android avatars**, and then uploads **all iOS avatars**. What used to take hours of manual work happens completely unattended in a fraction of the time.
+
+## Built for Speed: Smart Platform Grouping
+
+Switching Unity's active build target (Windows ↔ Android ↔ iOS) forces heavy asset re-imports and shader recompilations that can take several minutes each time. If you upload manually, you are often forced to switch platforms back and forth between outfits, wasting hours babysitting progress bars.
+
+Synthos Batch Uploader eliminates this by organizing the upload queue by platform:
+- **All Windows Avatars First:** Builds and uploads every PC avatar back-to-back with zero platform interruptions.
+- **Single Platform Switch:** Automatically switches the build target to Android *only once*.
+- **All Android / Quest Avatars:** Builds and uploads every Android avatar in sequence.
+- **All iOS Avatars:** Automatically switches to iOS and uploads all iOS avatars to finish the queue.
+
+What used to take hours of manual babysitting happens completely unattended in a fraction of the time.
 
 ## Features
 
