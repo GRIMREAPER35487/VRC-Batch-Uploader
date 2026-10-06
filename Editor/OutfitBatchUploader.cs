@@ -515,28 +515,97 @@ namespace Synthos.BatchUploader
             EditorGUILayout.Space(4);
             DrawSeparator();
 
+            DrawMainPageTabs();
+            EditorGUILayout.Space(4);
+
+            if (_mainPage == 2)
+            {
+                DrawNewOutfitSetupSection(true);
+                return;
+            }
+
             if (_outfitsParent == null)
             {
                 DrawNoOutfitsMessage();
                 return;
             }
 
-            // ---- Outfit list ----
-            EditorGUILayout.LabelField(
-                $"Outfits ({_outfits.Count})  —  parent: \"{_outfitsParent.name}\"",
-                EditorStyles.boldLabel);
+            DrawOutfitPage(_mainPage == 1);
+        }
+
+        private int _mainPage; // 0 = Outfits, 1 = New Outfits, 2 = Defaults
+
+        private void DrawMainPageTabs()
+        {
+            int newCount = _outfits.Count(o => o != null && o.Go != null && string.IsNullOrWhiteSpace(o.BlueprintId));
+            string newLabel = newCount > 0 ? $"New Outfits ({newCount})" : "New Outfits";
+            _mainPage = GUILayout.Toolbar(
+                Mathf.Clamp(_mainPage, 0, 2),
+                new[] { "Outfits", newLabel, "Defaults" },
+                GUILayout.Height(24));
+        }
+
+        private void DrawOutfitPage(bool setupOnly)
+        {
+            var visibleOutfits = setupOnly
+                ? _outfits.Where(o => o != null && o.Go != null && string.IsNullOrWhiteSpace(o.BlueprintId)).ToList()
+                : _outfits;
+
+            if (setupOnly)
+            {
+                if (visibleOutfits.Count == 0)
+                {
+                    EditorGUILayout.HelpBox(
+                        "All detected outfits already have a Blueprint ID. New outfits will appear here until their first upload is configured.",
+                        MessageType.Info);
+                }
+                else
+                {
+                    EditorGUILayout.HelpBox(
+                        "These outfits still need their first upload. Use Express for the saved defaults or Advanced for a one-time override.",
+                        MessageType.Info);
+                }
+            }
+
+            // ---- Outfit list header ----
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(
+                    setupOnly
+                        ? $"New outfits ({visibleOutfits.Count})  —  parent: \"{_outfitsParent.name}\""
+                        : $"Outfits ({_outfits.Count})  —  parent: \"{_outfitsParent.name}\"",
+                    EditorStyles.boldLabel);
+                GUILayout.FlexibleSpace();
+
+                using (new EditorGUI.DisabledScope(setupOnly || _isBatchUploading || _isExpressBusy))
+                {
+                    EditorGUILayout.LabelField("Include in batch:", EditorStyles.miniLabel, GUILayout.Width(96));
+                    if (GUILayout.Button("All", EditorStyles.miniButton, GUILayout.Width(40)))
+                        SetAllOutfitsIncluded(true);
+                    if (GUILayout.Button("None", EditorStyles.miniButton, GUILayout.Width(44)))
+                        SetAllOutfitsIncluded(false);
+                }
+            }
             EditorGUILayout.Space(4);
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
-            for (int i = 0; i < _outfits.Count; i++)
-                DrawOutfitRow(_outfits[i]);
+            for (int i = 0; i < visibleOutfits.Count; i++)
+                DrawOutfitRow(visibleOutfits[i]);
             EditorGUILayout.EndScrollView();
 
             DrawSeparator();
-            DrawNewOutfitSetupSection();
-            DrawSeparator();
             DrawBatchSection();
             EditorGUILayout.Space(4);
+        }
+
+        private void SetAllOutfitsIncluded(bool included)
+        {
+            foreach (var o in _outfits)
+            {
+                if (o == null) continue;
+                o.IncludeInBatch = included;
+                SaveOutfitSettings(o);
+            }
         }
 
         // ---- Top bar ----

@@ -1,7 +1,7 @@
 {
   "name": "com.synthos.batch-uploader",
   "displayName": "Synthos Batch Uploader",
-  "version": "1.1.0-preview.1",
+  "version": "1.1.0-preview.2",
   "type": "avatar",
   "unity": "2022.3",
   "description": "Automates batch uploading multiple VRChat avatar outfits with multi-platform synchronization (PC, Android, iOS), blendshape offsets, material overrides, and blueprint ID management.",
