@@ -19,7 +19,7 @@ Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets,
 >
 > With Synthos Batch Uploader, you maintain **one single base avatar in one project**. Any improvement you make to the base body, bones, or animations immediately benefits every configuration. You no longer have to manually sync settings between different avatar versions—just click **Batch Upload All**, and the tool automatically cycles through each configuration, applies its unique blendshapes, swaps materials, assigns its Blueprint ID, and uploads it across PC, Android, and iOS in one automated run.
 
-## Built for Speed: Smart Platform Grouping (Click & Walk Away)
+## Built for Speed: Smart Platform Grouping
 
 Switching Unity's active build target (Windows ↔ Android ↔ iOS) forces heavy asset re-imports and shader recompilations that can take several minutes each time. If you upload manually, you are forced to switch platforms back and forth between outfits, wasting hours babysitting progress bars and clicking through SDK popups.
 
@@ -29,7 +29,7 @@ Synthos Batch Uploader eliminates this by organizing the upload queue by platfor
 - **All Android / Quest Avatars:** Builds and uploads every Android avatar in sequence.
 - **All iOS Avatars:** Automatically switches to iOS and uploads all iOS avatars to finish the queue.
 
-Confirm with the SDK once at the start, hit **Batch Upload All**, and **you can literally just walk away**. Grab a coffee, work on something else, or leave it running overnight—the entire queue executes 100% unattended, survives Unity platform switches and domain reloads automatically, and plays a completion chime when all your avatars are uploaded.
+Once started, the entire queue runs completely unattended—automatically handling platform switches, domain reloads, and sequential uploads so you can simply walk away until everything is finished.
 
 ## Features
 
@@ -84,7 +84,7 @@ Confirm with the SDK once at the start, hit **Batch Upload All**, and **you can 
 ### 5. Inspecting & Uploading
 - **Select Button:** Activates a single outfit in the scene (sets tags to `Untagged` / `EditorOnly`, updates the PipelineManager ID, and applies blendshapes and material overrides) for inspection without building.
 - **Upload Button:** Directly builds and uploads that specific outfit to the active platform.
-- **Batch Upload All:** Sequentially builds and uploads every outfit marked with **"Include in batch"**. Asks for SDK confirmation once at the start, handles platform switches with persistent queue recovery, and lets you just walk away while it uploads everything unattended (playing a completion chime when finished).
+- **Batch Upload All:** Sequentially builds and uploads every outfit marked with **"Include in batch"**. Prompts for SDK confirmation once at the start and runs the full multi-platform queue unattended, playing a completion chime when finished.
 
 ### 6. Preferences & Settings
 - **Reset to First Outfit:** Automatically resets the avatar in your scene to the first outfit after a batch upload finishes.
