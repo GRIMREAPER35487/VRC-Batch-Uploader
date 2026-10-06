@@ -1,3 +1,9 @@
+<div align="center">
+  <img src="https://raw.githubusercontent.com/GRIMREAPER35487/VRC-Batch-Uploader/main/.github/banner.png" alt="Synthos Batch Uploader" width="100%" />
+</div>
+
+<br/>
+
 # Synthos Batch Uploader
 
 > [!WARNING]
@@ -14,8 +20,8 @@ Automates tag switching, blueprint ID assignment, per-outfit blendshape offsets,
 > - **Colorway & Art Style Themes:** Swap full material palettes (dark/light themes, cel-shaded vs. realistic) without duplicating the base model.
 > - **Tiered Editions:** Build Public vs. Private avatar releases with different accessories enabled or stripped.
 >
-> **Stop Maintaining Duplicate Projects or Desynced Avatar Versions:**
-> Traditionally, managing multiple avatar editions meant duplicating your avatar across multiple scenes or maintaining entirely separate, disk-heavy Unity projects. Whenever you tweaked a PhysBone, fixed a weight paint issue, improved a facial gesture, or updated a base texture, you had to painstakingly repeat that manual update across every single version.
+> **Single Base Avatar Workflow:**
+> Traditionally, managing multiple avatar editions meant duplicating models across scenes or maintaining separate Unity projects, requiring manual syncing whenever armatures, PhysBones, or animations were modified.
 >
 > Synthos Batch Uploader lets you maintain a **single** base avatar for multiple outfits or variants. Changes made to the base mesh, armature, or animations automatically carry over to every setup. During a build, the tool iterates through each configured outfit, applies its blendshapes, material overrides, and Blueprint ID, and builds across PC, Android, and iOS in sequence.
 
