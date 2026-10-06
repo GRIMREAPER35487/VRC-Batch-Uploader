@@ -110,7 +110,7 @@ Then search for **Synthos Batch Uploader** in the package list and click **Insta
 Currently in development for upcoming releases:
 - **Sound on Error:** An audible alert tone that plays immediately if an avatar encounters a build or upload error.
 - **Proceed & Warn on Error:** An option to log a warning and continue uploading the rest of the queue if an avatar fails, preventing a single failure from halting an entire unattended batch.
-- **New Outfit Setup (Express & Advanced Modes):** Streamlines setting up and uploading brand-new outfits that don't have a Blueprint ID yet, removing the need to manually unbind blueprints, copy IDs, or set tags.
+- **New Outfit Setup (Express & Advanced Modes):** *(Port from [TheSilentD3ath/VRChat-outfit-batch-uploader](https://github.com/TheSilentD3ath/VRChat-outfit-batch-uploader))* Streamlines setting up and uploading brand-new outfits that don't have a Blueprint ID yet, removing the need to manually unbind blueprints, copy IDs, or set tags.
   - **Express Setup:** A one-click automated path that clears the `PipelineManager` Blueprint ID (so the VRChat SDK registers a fresh avatar), applies template defaults (name, description, release status, content warnings), auto-captures a thumbnail, optionally accepts SDK auto-fixes, builds and uploads the new avatar, and writes the newly assigned Blueprint ID directly back into the tool.
   - **Advanced Setup:** Follows the same automated pipeline, but allows reviewing and overriding the name, description, content warning tags, release status, and thumbnail per outfit before building.
   - **Global Defaults Configuration:** Configured once and saved across sessions:
