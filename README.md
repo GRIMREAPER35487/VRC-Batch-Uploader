@@ -124,7 +124,8 @@ Currently in development for upcoming releases:
 ## Credits & Acknowledgments
 
 - **Upstream Project:** Forked from and based on [TheSilentD3ath/VRChat-outfit-batch-uploader](https://github.com/TheSilentD3ath/VRChat-outfit-batch-uploader) (MIT License).
-- **Enhancements:** Extended by Synthos.
+- **Special Thanks & Appreciation:** A huge thank you and appreciation to [TheSilentD3ath](https://github.com/TheSilentD3ath) for creating the original base codebase and inspiring the vision to expand and evolve this tool into what it can do today.
+- **Enhancements:** Extended and maintained by Synthos.
 
 ## License
 
