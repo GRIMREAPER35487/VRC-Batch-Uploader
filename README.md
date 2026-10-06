@@ -41,7 +41,8 @@ Once started, the entire queue runs completely unattended—automatically handli
 - **Domain Reload & Crash Recovery:** Uses persistent editor session storage to seamlessly survive Unity domain reloads, script recompilations, and platform switches mid-queue, resuming upload execution automatically once the VRChat SDK re-initializes.
 - **Seamless Blueprint ID Management:** Stores and applies unique VRChat Blueprint IDs (`avtr_...`) for every outfit and platform, automatically updating the avatar's `PipelineManager` component before each build.
 - **Interactive Outfit Selector & Inspector:** Features an in-editor **Select** button for every outfit, allowing creators to preview, pose, and inspect outfit blendshapes and materials directly in the Unity scene view with full Undo support.
-- **Visual Progress & Audio Feedback:** Features color-coded platform indicators, detailed progress status bars, and an optional audio chime on batch completion.
+- **Audible Chimes & Error Alerts:** Features an optional completion chime when the entire batch finishes, plus immediate audio alert tones if an avatar encounters a build or upload error.
+- **Proceed & Warn on Error:** Optional "click and walk away" mode to log warnings and continue uploading the remainder of the queue if an outfit fails, preventing a single failure from halting an entire batch.
 - **Automated Legacy Migration:** Seamlessly detects and imports existing outfit data, blendshapes, material overrides, and blueprint IDs from previous tool configurations (`ProjectSettings/VRC_Batch_Uploader/` and `ProjectSettings/ShiroTools/`) without losing project data.
 
 ## How It Works
@@ -108,8 +109,6 @@ Then search for **Synthos Batch Uploader** in the package list and click **Insta
 ## What's Next
 
 Currently in development for upcoming releases:
-- **Sound on Error:** An audible alert tone that plays immediately if an avatar encounters a build or upload error.
-- **Proceed & Warn on Error:** An option to log a warning and continue uploading the rest of the queue if an avatar fails, preventing a single failure from halting an entire unattended batch.
 - **New Outfit Setup (Express & Advanced Modes):** *(Port from [TheSilentD3ath/VRChat-outfit-batch-uploader](https://github.com/TheSilentD3ath/VRChat-outfit-batch-uploader))* Streamlines setting up and uploading brand-new outfits that don't have a Blueprint ID yet, removing the need to manually unbind blueprints, copy IDs, or set tags.
   - **Express Setup:** A one-click automated path that clears the `PipelineManager` Blueprint ID (so the VRChat SDK registers a fresh avatar), applies template defaults (name, description, release status, content warnings), auto-captures a thumbnail, optionally accepts SDK auto-fixes, builds and uploads the new avatar, and writes the newly assigned Blueprint ID directly back into the tool.
   - **Advanced Setup:** Follows the same automated pipeline, but allows reviewing and overriding the name, description, content warning tags, release status, and thumbnail per outfit before building.
