@@ -31,7 +31,7 @@ using VRC.SDKBase.Editor.Api;   // VRCApi, VRCAvatar
 
 namespace Synthos.BatchUploader
 {
-    public class OutfitBatchUploader : EditorWindow
+    public partial class OutfitBatchUploader : EditorWindow
     {
         // ---- Enums ----
         public enum UploadMode
@@ -133,6 +133,11 @@ namespace Synthos.BatchUploader
                 _isBatchUploading = true;
                 EditorApplication.update += HandleResumeBatch;
             }
+            // Check for express setup resume
+            else if (SessionState.GetBool(SESSION_EXPRESS_PENDING, false))
+            {
+                TryResumeExpress();
+            }
             // Check for a finished batch status after a domain reload
             else if (SessionState.GetBool(SESSION_PLAY_SOUND_ON_WAKE, false) ||
                      SessionState.GetBool(SESSION_PLAY_ERROR_SOUND_ON_WAKE, false) ||
@@ -145,6 +150,7 @@ namespace Synthos.BatchUploader
 
         private void OnDisable()
         {
+            StopConsentWatcher();
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorApplication.hierarchyChanged -= OnHierarchyChanged;
         }
@@ -318,6 +324,7 @@ namespace Synthos.BatchUploader
         {
             _outfitsParent = null;
             _outfits.Clear();
+            ResetNewSetupUiState();
 
             _avatarsInScene = FindObjectsOfType<VRCAvatarDescriptor>()
                 .Select(d => d.gameObject)
@@ -525,6 +532,8 @@ namespace Synthos.BatchUploader
                 DrawOutfitRow(_outfits[i]);
             EditorGUILayout.EndScrollView();
 
+            DrawSeparator();
+            DrawNewOutfitSetupSection();
             DrawSeparator();
             DrawBatchSection();
             EditorGUILayout.Space(4);
@@ -803,6 +812,11 @@ namespace Synthos.BatchUploader
                             _ = StartBatchAsync(new List<OutfitEntry> { entry }, isDirectUpload: true);
                         }
                     }
+                }
+
+                if (string.IsNullOrWhiteSpace(entry.BlueprintId))
+                {
+                    DrawInlineNewOutfitButtons(entry);
                 }
 
                 // Row 3: batch include toggle

@@ -43,6 +43,7 @@ Once started, the entire queue runs completely unattended—automatically handli
 - **Interactive Outfit Selector & Inspector:** Features an in-editor **Select** button for every outfit, allowing creators to preview, pose, and inspect outfit blendshapes and materials directly in the Unity scene view with full Undo support.
 - **Audible Chimes & Error Alerts:** Features an optional completion chime when the entire batch finishes, plus immediate audio alert tones if an avatar encounters a build or upload error.
 - **Proceed & Warn on Error:** Optional "click and walk away" mode to log warnings and continue uploading the remainder of the queue if an outfit fails, preventing a single failure from halting an entire batch.
+- **New Outfit Setup (Express & Advanced Modes):** Streamlines setting up and uploading brand-new outfits that don't have a Blueprint ID yet. Includes one-click **Express Setup** (clears PipelineManager ID, auto-generates thumbnails, auto-detects SPS/DPS content warnings, optionally accepts SDK auto-fixes, builds and uploads as a new avatar, and writes back the newly generated ID) and **Advanced Setup** for per-outfit review and customization.
 - **Automated Legacy Migration:** Seamlessly detects and imports existing outfit data, blendshapes, material overrides, and blueprint IDs from previous tool configurations (`ProjectSettings/VRC_Batch_Uploader/` and `ProjectSettings/ShiroTools/`) without losing project data.
 
 ## How It Works
@@ -110,16 +111,16 @@ Then search for **Synthos Batch Uploader** in the package list and click **Insta
 
 - ~~**Sound on Error:** An audible alert tone that plays immediately if an avatar encounters a build or upload error.~~ *(Added in v1.0.3)*
 - ~~**Proceed & Warn on Error:** An option to log a warning and continue uploading the rest of the queue if an avatar fails, preventing a single failure from halting an entire unattended batch.~~ *(Added in v1.0.3)*
-- **New Outfit Setup (Express & Advanced Modes):** *(Port from [TheSilentD3ath/VRChat-outfit-batch-uploader](https://github.com/TheSilentD3ath/VRChat-outfit-batch-uploader))* Streamlines setting up and uploading brand-new outfits that don't have a Blueprint ID yet, removing the need to manually unbind blueprints, copy IDs, or set tags.
-  - **Express Setup:** A one-click automated path that clears the `PipelineManager` Blueprint ID (so the VRChat SDK registers a fresh avatar), applies template defaults (name, description, release status, content warnings), auto-captures a thumbnail, optionally accepts SDK auto-fixes, builds and uploads the new avatar, and writes the newly assigned Blueprint ID directly back into the tool.
-  - **Advanced Setup:** Follows the same automated pipeline, but allows reviewing and overriding the name, description, content warning tags, release status, and thumbnail per outfit before building.
-  - **Global Defaults Configuration:** Configured once and saved across sessions:
-    - **Name & Description Templates:** Dynamic string templates supporting `{outfit}` and `{avatar}` tokens.
-    - **Release Status:** Default to Public or Private.
-    - **Content Warning Tags:** Automatically configures VRChat's five content tags (*Sexually Suggestive*, *Adult Language and Themes*, *Graphic Violence*, *Excessive Gore*, *Extreme Horror*).
-    - **Auto-Detect SPS/DPS:** Automatically flags the *Sexually Suggestive* tag if SPS (VRCFury Haptic Plug/Socket) or DPS components are detected on the avatar.
-    - **Thumbnail Automation:** Uses a fixed default image or automatically renders a capture from a scene camera against a solid background color.
-    - **Auto-Accept SDK Fixes:** Automatically applies the VRChat SDK's proposed build fixes, surviving script recompilations / domain reloads when the editor settles.
+- ~~**New Outfit Setup (Express & Advanced Modes):** *(Port from [TheSilentD3ath/VRChat-outfit-batch-uploader](https://github.com/TheSilentD3ath/VRChat-outfit-batch-uploader))* Streamlines setting up and uploading brand-new outfits that don't have a Blueprint ID yet, removing the need to manually unbind blueprints, copy IDs, or set tags.~~ *(Added in v1.1.0-preview.1)*
+  - ~~**Express Setup:** A one-click automated path that clears the `PipelineManager` Blueprint ID (so the VRChat SDK registers a fresh avatar), applies template defaults (name, description, release status, content warnings), auto-captures a thumbnail, optionally accepts SDK auto-fixes, builds and uploads the new avatar, and writes the newly assigned Blueprint ID directly back into the tool.~~
+  - ~~**Advanced Setup:** Follows the same automated pipeline, but allows reviewing and overriding the name, description, content warning tags, release status, and thumbnail per outfit before building.~~
+  - ~~**Global Defaults Configuration:** Configured once and saved across sessions:~~
+    - ~~**Name & Description Templates:** Dynamic string templates supporting `{outfit}` and `{avatar}` tokens.~~
+    - ~~**Release Status:** Default to Public or Private.~~
+    - ~~**Content Warning Tags:** Automatically configures VRChat's five content tags (*Sexually Suggestive*, *Adult Language and Themes*, *Graphic Violence*, *Excessive Gore*, *Extreme Horror*).~~
+    - ~~**Auto-Detect SPS/DPS:** Automatically flags the *Sexually Suggestive* tag if SPS (VRCFury Haptic Plug/Socket) or DPS components are detected on the avatar.~~
+    - ~~**Thumbnail Automation:** Uses a fixed default image or automatically renders a capture from a scene camera against a solid background color.~~
+    - ~~**Auto-Accept SDK Fixes:** Automatically applies the VRChat SDK's proposed build fixes, surviving script recompilations / domain reloads when the editor settles.~~
 
 ## Credits & Acknowledgments
 
