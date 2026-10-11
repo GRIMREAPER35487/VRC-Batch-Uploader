@@ -6,6 +6,11 @@
 
 # Synthos Batch Uploader
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/GRIMREAPER35487/VRC-Batch-Uploader?include_prereleases)](https://github.com/GRIMREAPER35487/VRC-Batch-Uploader/releases)
+[![GitHub Downloads (latest)](https://img.shields.io/github/downloads-pre/GRIMREAPER35487/VRC-Batch-Uploader/latest/total?label=downloads%40latest)](https://github.com/GRIMREAPER35487/VRC-Batch-Uploader/releases)
+[![GitHub Downloads (total)](https://img.shields.io/github/downloads/GRIMREAPER35487/VRC-Batch-Uploader/total?label=downloads%40total)](https://github.com/GRIMREAPER35487/VRC-Batch-Uploader/releases)
+
 > [!WARNING]
 > **Safety & Backup Advisory:** While the batch uploader is built to be non-destructive by staging material and blendshape overrides in memory and reverting them post-upload, batch operations involve automated platform switching, scene tag updates, and VRChat SDK build calls. Always ensure your avatar project and scene are **backed up or committed to version control (Git)** before running large batch uploads.
 
