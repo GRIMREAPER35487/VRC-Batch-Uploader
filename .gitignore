@@ -5,5 +5,5 @@
 .DS_Store
 Thumbs.db
 
-# EditorPrefs are local — not committed
-# (Blueprint IDs are stored there, not in files)
+# Outfit settings (Blueprint IDs, overrides) live in each Unity project's
+# ProjectSettings/VRC_Batch_Uploader, not in this package
