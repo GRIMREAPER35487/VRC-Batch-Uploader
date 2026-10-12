@@ -11,10 +11,9 @@
 //    3. Applies a default description, release status and content
 //       warning tags (with optional SPS/DPS auto-detection that
 //       adds the "Sexually Suggestive" tag automatically).
-//    4. Optionally accepts the auto-fixes the VRChat SDK proposes
-//       in its build alerts (best-effort, see TryApplySdkAutoFixes).
-//    5. Builds + uploads as a NEW avatar and writes the freshly
-//       created Blueprint ID back into the tool automatically.
+//    4. Builds + uploads as a NEW avatar from the PC (Windows)
+//       build target and writes the freshly created Blueprint ID
+//       back into the tool automatically.
 //
 //  Defaults are configured in the "New Outfit Setup" section and
 //  stored in EditorPrefs so they persist across sessions.
@@ -63,7 +62,6 @@ namespace Synthos.BatchUploader
         private const string NS_THUMB_IMG   = "SynthosNewOutfit_ThumbImagePath";   // asset or absolute path
         private const string NS_BG_COLOR    = "SynthosNewOutfit_BgColor";          // html RGBA
         private const string NS_AUTO_SPS    = "SynthosNewOutfit_AutoDetectSps";
-        private const string NS_AUTO_FIX    = "SynthosNewOutfit_AutoApplyFixes";
         private const string NS_AUTO_CONSENT = "SynthosNewOutfit_AutoConsent";
         private const string NS_TAG_PREFIX  = "SynthosNewOutfit_Tag_";             // + content tag
 
@@ -85,7 +83,6 @@ namespace Synthos.BatchUploader
         private string _nsThumbImagePath;
         private Color  _nsBgColor = new Color(0.10f, 0.10f, 0.12f, 1f);
         private bool   _nsAutoSps;
-        private bool   _nsAutoFix;
         private bool   _nsAutoConsent;
         private readonly Dictionary<string, bool> _nsTagDefaults = new Dictionary<string, bool>();
 
@@ -122,7 +119,6 @@ namespace Synthos.BatchUploader
                 _nsThumbMode      = EditorPrefs.GetString("ShiroNewOutfit_ThumbMode", "scene");
                 _nsThumbImagePath = EditorPrefs.GetString("ShiroNewOutfit_ThumbImagePath", "");
                 _nsAutoSps        = EditorPrefs.GetBool("ShiroNewOutfit_AutoDetectSps", true);
-                _nsAutoFix        = EditorPrefs.GetBool("ShiroNewOutfit_AutoApplyFixes", true);
                 _nsAutoConsent    = EditorPrefs.GetBool("ShiroNewOutfit_AutoConsent", true);
 
                 string legacyCol = EditorPrefs.GetString("ShiroNewOutfit_BgColor", "1A1A1FFF");
@@ -140,7 +136,6 @@ namespace Synthos.BatchUploader
             _nsThumbMode      = EditorPrefs.GetString(NS_THUMB_MODE, "scene");
             _nsThumbImagePath = EditorPrefs.GetString(NS_THUMB_IMG, "");
             _nsAutoSps        = EditorPrefs.GetBool(NS_AUTO_SPS, true);
-            _nsAutoFix        = EditorPrefs.GetBool(NS_AUTO_FIX, true);
             _nsAutoConsent    = EditorPrefs.GetBool(NS_AUTO_CONSENT, true);
 
             string col = EditorPrefs.GetString(NS_BG_COLOR, "1A1A1FFF");
@@ -159,7 +154,6 @@ namespace Synthos.BatchUploader
             EditorPrefs.SetString(NS_THUMB_MODE, _nsThumbMode);
             EditorPrefs.SetString(NS_THUMB_IMG, _nsThumbImagePath ?? "");
             EditorPrefs.SetBool(NS_AUTO_SPS, _nsAutoSps);
-            EditorPrefs.SetBool(NS_AUTO_FIX, _nsAutoFix);
             EditorPrefs.SetBool(NS_AUTO_CONSENT, _nsAutoConsent);
             EditorPrefs.SetString(NS_BG_COLOR, ColorUtility.ToHtmlStringRGBA(_nsBgColor));
             foreach (var tag in CONTENT_TAGS)
@@ -270,7 +264,7 @@ namespace Synthos.BatchUploader
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     GUILayout.Space(114);
-                    using (new EditorGUI.DisabledScope(_avatarRoot == null))
+                    using (new EditorGUI.DisabledScope(ExpressRoot == null))
                     {
                         if (GUILayout.Button("Preview thumbnail", EditorStyles.miniButton, GUILayout.Width(140)))
                         {
@@ -298,8 +292,6 @@ namespace Synthos.BatchUploader
             }
 
             EditorGUILayout.Space(4);
-            _nsAutoFix = EditorGUILayout.ToggleLeft(
-                "Auto-accept the fixes the VRChat SDK proposes in its alerts (best-effort)", _nsAutoFix);
             _nsAutoConsent = EditorGUILayout.ToggleLeft(
                 "Auto-confirm the SDK's copyright/ownership dialog (you still confirm once in this tool)", _nsAutoConsent);
 
@@ -427,13 +419,20 @@ namespace Synthos.BatchUploader
         private bool _isExpressBusy;
         private bool _expressQuietMode;
 
+        private const string EXPRESS_PC_ONLY_MSG =
+            "New avatars have to be created on the PC side. Switch the build target to Windows, then run Express setup again.";
+
+        /// <summary>New avatars are always created from the PC build, so Express works on the PC avatar root.</summary>
+        private GameObject ExpressRoot => GetTargetAvatarForPlatform(VRCPlatform.Windows);
+
         private async Task ExpressSetupAsync(OutfitEntry entry, AdvancedDraft draft = null, bool skipConfirm = false)
         {
             _expressQuietMode = skipConfirm;
-            if (_avatarRoot == null) { SetStatus("No avatar root selected.", MessageType.Error); return; }
+            if (ExpressRoot == null) { SetStatus("No PC avatar root selected.", MessageType.Error); return; }
             if (_outfitsParent == null) { SetStatus("No outfits parent found.", MessageType.Error); return; }
+            if (GetCurrentPlatform() != VRCPlatform.Windows) { SetStatus(EXPRESS_PC_ONLY_MSG, MessageType.Warning); return; }
 
-            if (!VRCSdkControlPanel.TryGetBuilder<IVRCSdkAvatarBuilderApi>(out var builder))
+            if (!VRCSdkControlPanel.TryGetBuilder<IVRCSdkAvatarBuilderApi>(out _))
             {
                 SetStatus("VRC SDK builder not available - open the VRChat SDK window first.", MessageType.Error);
                 return;
@@ -497,19 +496,6 @@ namespace Synthos.BatchUploader
                 EditorSceneManager.SaveScene(SceneManager.GetActiveScene());
                 AssetDatabase.SaveAssets();
 
-                // Optionally accept SDK auto-fixes
-                if (_nsAutoFix)
-                {
-                    int fixes = TryApplySdkAutoFixes(builder);
-                    if (fixes > 0)
-                    {
-                        SetStatus($"Applied {fixes} SDK auto-fix(es). Refreshing...", MessageType.Info);
-                        Repaint();
-                        AssetDatabase.Refresh();
-                        await Task.Delay(800);
-                    }
-                }
-
                 await ContinueExpressUploadAsync();
             }
             catch (Exception ex)
@@ -545,10 +531,19 @@ namespace Synthos.BatchUploader
             var tags = SessionState.GetString(SESSION_EXPRESS_TAGS, "")
                         .Split(';').Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
 
-            var pm = _avatarRoot != null ? _avatarRoot.GetComponentInChildren<PipelineManager>() : null;
+            if (GetCurrentPlatform() != VRCPlatform.Windows)
+            {
+                SetStatus(EXPRESS_PC_ONLY_MSG, MessageType.Warning);
+                CleanupTempThumb(thumbPath);
+                ClearExpressState(); _isExpressBusy = false; return;
+            }
+
+            var root = ExpressRoot;
+            var pm = root != null ? root.GetComponentInChildren<PipelineManager>() : null;
             if (pm == null)
             {
-                SetStatus("No PipelineManager on the avatar.", MessageType.Error);
+                SetStatus("No PipelineManager on the PC avatar.", MessageType.Error);
+                CleanupTempThumb(thumbPath);
                 ClearExpressState(); _isExpressBusy = false; return;
             }
 
@@ -568,26 +563,19 @@ namespace Synthos.BatchUploader
 
             try
             {
-                await builder.BuildAndUpload(_avatarRoot, newAvatar, thumbPath);
+                await builder.BuildAndUpload(root, newAvatar, thumbPath);
 
                 // Poll for new blueprint ID
                 string newId = null;
                 for (int i = 0; i < 25 && string.IsNullOrWhiteSpace(newId); i++)
                 {
-                    var pmNow = _avatarRoot != null ? _avatarRoot.GetComponentInChildren<PipelineManager>() : pm;
-                    newId = pmNow != null ? pmNow.blueprintId : null;
+                    newId = ReadExpressBlueprintId(root, pm);
                     if (string.IsNullOrWhiteSpace(newId)) await Task.Delay(200);
                 }
 
                 if (!string.IsNullOrWhiteSpace(newId))
                 {
-                    var entry = _outfits.FirstOrDefault(o => o.Name == outfitName);
-                    if (entry != null)
-                    {
-                        entry.BlueprintId = newId;
-                        SaveOutfitSettings(entry);
-                        EditorPrefs.SetString(entry.PrefsKey, newId);
-                    }
+                    WriteBackBlueprintId(outfitName, newId);
                     LogUpload($"OK    {outfitName} (Express new avatar) -> {newId}");
                     SetStatus($"[OK] Created new avatar for '{outfitName}' -> {newId}", MessageType.Info);
                     if (_soundEnabled && !_expressQuietMode) PlayConfirmSound();
@@ -602,7 +590,21 @@ namespace Synthos.BatchUploader
             {
                 Debug.LogError("[OutfitBatchUploader] New-avatar upload failed: " + ex);
                 LogUpload($"FAIL  {outfitName} (Express new avatar): {ex.Message}");
-                SetStatus("New-avatar upload failed: " + Truncate(ex.Message, 140), MessageType.Error);
+
+                // The SDK may have created the avatar record before failing (e.g. during the image upload).
+                // Keep that ID so running Express again doesn't create a duplicate avatar.
+                string partialId = ReadExpressBlueprintId(root, pm);
+                if (!string.IsNullOrWhiteSpace(partialId))
+                {
+                    WriteBackBlueprintId(outfitName, partialId);
+                    LogUpload($"WARN  {outfitName} (Express new avatar): kept partially created avatar {partialId}");
+                    SetStatus($"New-avatar upload failed, but VRChat already created {partialId} - it was saved to '{outfitName}'. " +
+                              "Use the normal Upload to finish it: " + Truncate(ex.Message, 100), MessageType.Error);
+                }
+                else
+                {
+                    SetStatus("New-avatar upload failed: " + Truncate(ex.Message, 140), MessageType.Error);
+                }
                 if (_errorSoundEnabled) PlayErrorSound();
             }
             finally
@@ -710,6 +712,21 @@ namespace Synthos.BatchUploader
             return false;
         }
 
+        private static string ReadExpressBlueprintId(GameObject root, PipelineManager fallback)
+        {
+            var pmNow = root != null ? root.GetComponentInChildren<PipelineManager>() : fallback;
+            return pmNow != null ? pmNow.blueprintId : null;
+        }
+
+        private void WriteBackBlueprintId(string outfitName, string newId)
+        {
+            var entry = _outfits.FirstOrDefault(o => o.Name == outfitName);
+            if (entry == null) return;
+            entry.BlueprintId = newId;
+            SaveOutfitSettings(entry);
+            EditorPrefs.SetString(entry.PrefsKey, newId);
+        }
+
         private void ClearExpressState()
         {
             SessionState.EraseBool(SESSION_EXPRESS_PENDING);
@@ -745,7 +762,8 @@ namespace Synthos.BatchUploader
         // ============================================================
         private void ClearBlueprintId()
         {
-            var pm = _avatarRoot != null ? _avatarRoot.GetComponentInChildren<PipelineManager>() : null;
+            var root = ExpressRoot;
+            var pm = root != null ? root.GetComponentInChildren<PipelineManager>() : null;
             if (pm == null) return;
             Undo.RecordObject(pm, "Clear Blueprint ID for new avatar");
             pm.blueprintId = "";
@@ -775,7 +793,8 @@ namespace Synthos.BatchUploader
         private string ApplyTokens(string template, OutfitEntry entry)
         {
             if (string.IsNullOrEmpty(template)) return "";
-            string avatarName = _avatarRoot != null ? _avatarRoot.name : "";
+            var root = ExpressRoot;
+            string avatarName = root != null ? root.name : "";
             return template.Replace("{outfit}", entry.Name).Replace("{avatar}", avatarName);
         }
 
@@ -786,10 +805,11 @@ namespace Synthos.BatchUploader
         /// be uploaded for this outfit - not on an EditorOnly subtree and not inside a different outfit.</summary>
         private bool DetectSpsOrDps(OutfitEntry target)
         {
-            if (_avatarRoot == null) return false;
+            var root = ExpressRoot;
+            if (root == null) return false;
 
             // SPS - VRCFury haptic components (internal types, matched by name)
-            foreach (var comp in _avatarRoot.GetComponentsInChildren<Component>(true))
+            foreach (var comp in root.GetComponentsInChildren<Component>(true))
             {
                 if (comp == null) continue;
                 string tn = comp.GetType().Name;
@@ -804,7 +824,7 @@ namespace Synthos.BatchUploader
             }
 
             // DPS - name heuristic on GameObjects
-            foreach (var t in _avatarRoot.GetComponentsInChildren<Transform>(true))
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
             {
                 string n = t.name.ToLowerInvariant();
                 bool hit = n.Contains("penetrator") || n.Contains("orifice") ||
@@ -833,7 +853,8 @@ namespace Synthos.BatchUploader
         private bool IsUnderEditorOnly(Transform t)
         {
             Transform cur = t;
-            Transform rootT = _avatarRoot != null ? _avatarRoot.transform : null;
+            var root = ExpressRoot;
+            Transform rootT = root != null ? root.transform : null;
             while (cur != null)
             {
                 if (cur.CompareTag("EditorOnly")) return true;
@@ -915,7 +936,7 @@ namespace Synthos.BatchUploader
 
                 if (!useSceneView)
                 {
-                    Bounds b = ComputeRenderBounds(_avatarRoot);
+                    Bounds b = ComputeRenderBounds(ExpressRoot);
                     Vector3 center = b.center;
                     float radius = Mathf.Max(0.25f, b.extents.magnitude);
                     float dist = radius / Mathf.Sin(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
@@ -1054,56 +1075,6 @@ namespace Synthos.BatchUploader
                 if (_tex != null) DestroyImmediate(_tex);
                 CleanupTempThumb(_path);
             }
-        }
-
-        // ---- SDK auto-fix (best-effort, reflection) ----
-        private int TryApplySdkAutoFixes(object builder)
-        {
-            int applied = 0;
-            try
-            {
-                Type t = builder.GetType();
-                FieldInfo errF = null, warnF = null;
-                while (t != null && (errF == null || warnF == null))
-                {
-                    errF  ??= t.GetField("GUIErrors",   BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                    warnF ??= t.GetField("GUIWarnings", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                    t = t.BaseType;
-                }
-
-                applied += InvokeFixesFromDict(errF?.GetValue(builder));
-                applied += InvokeFixesFromDict(warnF?.GetValue(builder));
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning("[OutfitBatchUploader] Auto-fix pass skipped (SDK internals changed?): " + ex.Message);
-            }
-            return applied;
-        }
-
-        private int InvokeFixesFromDict(object dictObj)
-        {
-            int n = 0;
-            if (dictObj is not System.Collections.IDictionary dict) return 0;
-
-            foreach (System.Collections.DictionaryEntry kv in dict)
-            {
-                if (kv.Value is not System.Collections.IEnumerable list) continue;
-                foreach (var issueObj in list)
-                {
-                    if (issueObj == null) continue;
-                    var fixField = issueObj.GetType().GetField("fixThisIssue");
-                    if (fixField?.GetValue(issueObj) is Action fix)
-                    {
-                        try { fix(); n++; }
-                        catch (Exception ex)
-                        {
-                            Debug.LogWarning("[OutfitBatchUploader] An SDK auto-fix threw: " + ex.Message);
-                        }
-                    }
-                }
-            }
-            return n;
         }
 
         private static void LogUpload(string message)

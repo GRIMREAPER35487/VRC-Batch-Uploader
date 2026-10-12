@@ -1,14 +1,16 @@
 // ============================================================
-//  VRC Batch Uploader
-//  Window: Tools > Batch Uploader
+//  Synthos Batch Uploader
+//  Window: Tools > Synthos > Batch Uploader
 //
 //  Automates uploading multiple VRChat avatar outfits that live
 //  as children of a single "Outfits" parent in your scene.
 //  For each outfit the tool switches tags (Untagged / EditorOnly),
 //  sets the PipelineManager blueprintId, applies per-outfit
-//  blendshape overrides, and triggers the VRC SDK build + upload.
+//  blendshape and material overrides, and triggers the VRC SDK
+//  build + upload.
 //
-//  Settings are saved in EditorPrefs and persist across sessions.
+//  Per-outfit settings are saved as JSON in
+//  ProjectSettings/VRC_Batch_Uploader; window options in EditorPrefs.
 // ============================================================
 
 using System;
@@ -16,6 +18,7 @@ using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
@@ -50,8 +53,6 @@ namespace Synthos.BatchUploader
         private const string PREFS_UPLOAD_MODE       = "ShiroOutfitUploader_UploadMode";
         private const string PREFS_LINK_ANDROID_IOS  = "ShiroOutfitUploader_LinkAndroidIOS";
         private const string DEFAULT_PARENT_NAME     = "Outfits";
-        private const string SOUND_ASSET_PATH        = "Assets/VRC_Batch_Uploader/Editor/Sounds/UI Confirm Sound.mp3";
-        private const string SOUND_ERROR_ASSET_PATH  = "Assets/VRC_Batch_Uploader/Editor/Sounds/UI Error Sound.wav";
 
         private const string SESSION_BATCH_ACTIVE     = "Shiro_BatchActive";
         private const string SESSION_BATCH_QUEUE      = "Shiro_BatchQueue";
@@ -98,6 +99,9 @@ namespace Synthos.BatchUploader
         private string             _statusMessage    = "";
         private MessageType        _statusType       = MessageType.Info;
         private CancellationTokenSource _cts;
+        private bool               _queueLoopRunning;
+        private int                _queueRunId;
+        private double             _resumeNotBefore;
 
         // ---- Styles (lazy init) ----
         private GUIStyle _headerStyle;
@@ -123,6 +127,8 @@ namespace Synthos.BatchUploader
             _errorSoundEnabled  = EditorPrefs.GetBool(PREFS_ERROR_SOUND_ENABLED, true);
             _proceedOnError     = EditorPrefs.GetBool(PREFS_PROCEED_ON_ERROR, false);
             _resetToFirstOutfit = EditorPrefs.GetBool(PREFS_RESET_TO_FIRST, true);
+            _uploadMode         = (UploadMode)EditorPrefs.GetInt(PREFS_UPLOAD_MODE, (int)_uploadMode);
+            _linkAndroidAndIOS  = EditorPrefs.GetBool(PREFS_LINK_ANDROID_IOS, _linkAndroidAndIOS);
             ScanScene();
             EditorSceneManager.sceneOpened += OnSceneOpened;
             EditorApplication.hierarchyChanged += OnHierarchyChanged;
@@ -184,7 +190,10 @@ namespace Synthos.BatchUploader
         {
             // Wait until Unity is fully settled after the Domain Reload
             if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
-            
+
+            // Give a pending platform-switch reload time to start before resuming in this domain
+            if (EditorApplication.timeSinceStartup < _resumeNotBefore) return;
+
             // Wait for VRC SDK Builder to re-initialize
             if (!VRCSdkControlPanel.TryGetBuilder<IVRCSdkAvatarBuilderApi>(out _)) return;
 
@@ -242,6 +251,9 @@ namespace Synthos.BatchUploader
         //  Platform Avatar Helpers
         // ============================================================
 
+        /// <summary>Fallback that respects Unity's destroyed-object null check (`??` does not).</summary>
+        private static T Or<T>(T a, T b) where T : UnityEngine.Object => a != null ? a : b;
+
         public GameObject GetTargetAvatarForPlatform(VRCPlatform platform)
         {
             if (_uploadMode == UploadMode.SingleAvatar)
@@ -256,7 +268,7 @@ namespace Synthos.BatchUploader
                 case VRCPlatform.Android:
                     return _androidAvatarRoot != null ? _androidAvatarRoot : _avatarRoot;
                 case VRCPlatform.iOS:
-                    return (_linkAndroidAndIOS ? _androidAvatarRoot : _iosAvatarRoot) ?? _avatarRoot;
+                    return Or(_linkAndroidAndIOS ? _androidAvatarRoot : _iosAvatarRoot, _avatarRoot);
                 default:
                     return _avatarRoot;
             }
@@ -367,7 +379,7 @@ namespace Synthos.BatchUploader
                     }
                 }
 
-                _avatarRoot = _pcAvatarRoot ?? _androidAvatarRoot ?? (_avatarsInScene.Count > 0 ? _avatarsInScene[0] : null);
+                _avatarRoot = Or(Or(_pcAvatarRoot, _androidAvatarRoot), _avatarsInScene.Count > 0 ? _avatarsInScene[0] : null);
             }
 
             AutoDetectSkin();
@@ -629,10 +641,12 @@ namespace Synthos.BatchUploader
                 var activeAvs = GetActivePlatformAvatars();
                 if (activeAvs.Count > 0)
                 {
-                    if (GUILayout.Button("Restore Base Mats", EditorStyles.miniButton, GUILayout.Width(115)))
+                    var restoreContent = new GUIContent("Restore Base",
+                        "Restore the base materials and blendshapes that the active outfit's overrides replaced.");
+                    if (GUILayout.Button(restoreContent, EditorStyles.miniButton, GUILayout.Width(90)))
                     {
-                        RevertActiveMaterialOverrides(true);
-                        SetStatus("Restored base materials from JSON.", MessageType.Info);
+                        RevertActiveOverrides(true);
+                        SetStatus("Restored base materials and blendshapes.", MessageType.Info);
                         Repaint();
                     }
                 }
@@ -948,249 +962,30 @@ namespace Synthos.BatchUploader
                         }
                     }
 
-                    // Resolve references
-                    if (!mo.Resolved)
-                    {
-                        // PC Renderer
-                        if (!string.IsNullOrEmpty(mo.RendererPath))
-                        {
-                            var pcRoot = _uploadMode == UploadMode.SameProject ? (_pcAvatarRoot ?? _avatarRoot) : _avatarRoot;
-                            if (pcRoot != null)
-                            {
-                                Transform t = pcRoot.transform.Find(mo.RendererPath);
-                                if (t != null) mo.TargetRenderer = t.GetComponent<Renderer>();
-                            }
-                            if (mo.TargetRenderer == null)
-                            {
-                                foreach (var av in GetActivePlatformAvatars())
-                                {
-                                    Transform t = av.transform.Find(mo.RendererPath);
-                                    if (t != null) { mo.TargetRenderer = t.GetComponent<Renderer>(); break; }
-                                }
-                            }
-                        }
-
-                        // Mobile Renderer
-                        var mobileRoot = _androidAvatarRoot ?? _iosAvatarRoot;
-                        if (!string.IsNullOrEmpty(mo.AndroidRendererPath) && mobileRoot != null)
-                        {
-                            Transform t = mobileRoot.transform.Find(mo.AndroidRendererPath);
-                            if (t != null) mo.AndroidTargetRenderer = t.GetComponent<Renderer>();
-                        }
-                        else if (!string.IsNullOrEmpty(mo.RendererPath) && mobileRoot != null)
-                        {
-                            Transform t = mobileRoot.transform.Find(mo.RendererPath);
-                            if (t != null) mo.AndroidTargetRenderer = t.GetComponent<Renderer>();
-                        }
-
-                        if (!string.IsNullOrEmpty(mo.OverrideMatGuid))
-                        {
-                            string path = AssetDatabase.GUIDToAssetPath(mo.OverrideMatGuid);
-                            if (!string.IsNullOrEmpty(path))
-                                mo.OverrideMat = AssetDatabase.LoadAssetAtPath<Material>(path);
-                        }
-
-                        if (!string.IsNullOrEmpty(mo.AndroidOverrideMatGuid))
-                        {
-                            string path = AssetDatabase.GUIDToAssetPath(mo.AndroidOverrideMatGuid);
-                            if (!string.IsNullOrEmpty(path))
-                                mo.AndroidOverrideMat = AssetDatabase.LoadAssetAtPath<Material>(path);
-                        }
-                        mo.Resolved = true;
-                    }
+                    if (!mo.Resolved) ResolveMaterialOverride(mo);
 
                     if (_uploadMode == UploadMode.SameProject)
                     {
-                        // ==========================================
-                        // PC Avatar Override Section
-                        // ==========================================
                         EditorGUILayout.LabelField("PC Avatar", EditorStyles.boldLabel);
-
-                        EditorGUI.BeginChangeCheck();
-                        mo.TargetRenderer = (Renderer)EditorGUILayout.ObjectField("PC Renderer", mo.TargetRenderer, typeof(Renderer), true);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            if (mo.TargetRenderer != null)
-                            {
-                                GameObject root = _pcAvatarRoot ?? _avatarRoot;
-                                if (root != null && mo.TargetRenderer.transform.IsChildOf(root.transform))
-                                {
-                                    mo.RendererPath = AnimationUtility.CalculateTransformPath(mo.TargetRenderer.transform, root.transform);
-                                }
-                                else
-                                {
-                                    Debug.LogWarning("[VRC_Batch_Uploader] PC Renderer must be a child of the PC avatar root.");
-                                    mo.TargetRenderer = null;
-                                    mo.RendererPath = "";
-                                }
-                            }
-                            else
-                            {
-                                mo.RendererPath = "";
-                            }
-                            dirty = true;
-                        }
-
-                        if (mo.TargetRenderer != null && mo.TargetRenderer.sharedMaterials.Length > 0)
-                        {
-                            int maxSlot = mo.TargetRenderer.sharedMaterials.Length - 1;
-                            mo.MaterialSlot = Mathf.Clamp(mo.MaterialSlot, 0, maxSlot);
-
-                            string currentMatName = "None";
-                            Material currentMat = mo.TargetRenderer.sharedMaterials[mo.MaterialSlot];
-                            if (currentMat != null) currentMatName = currentMat.name;
-
-                            EditorGUI.BeginChangeCheck();
-                            mo.MaterialSlot = EditorGUILayout.IntSlider($"PC Slot ({currentMatName})", mo.MaterialSlot, 0, maxSlot);
-                            if (EditorGUI.EndChangeCheck()) dirty = true;
-                        }
-                        else
-                        {
-                            EditorGUILayout.LabelField("PC Slot", "No materials found");
-                        }
-
-                        EditorGUI.BeginChangeCheck();
-                        mo.OverrideMat = (Material)EditorGUILayout.ObjectField("PC Material", mo.OverrideMat, typeof(Material), false);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            if (mo.OverrideMat != null)
-                            {
-                                AssetDatabase.TryGetGUIDAndLocalFileIdentifier(mo.OverrideMat, out string guid, out long _);
-                                mo.OverrideMatGuid = guid;
-                            }
-                            else
-                            {
-                                mo.OverrideMatGuid = "";
-                            }
-                            dirty = true;
-                        }
+                        dirty |= DrawOverrideTarget("PC Renderer", "PC Slot", "PC Material",
+                            Or(_pcAvatarRoot, _avatarRoot), "PC avatar root",
+                            ref mo.TargetRenderer, ref mo.RendererPath, ref mo.MaterialSlot,
+                            ref mo.OverrideMat, ref mo.OverrideMatGuid);
 
                         EditorGUILayout.Space(4);
 
-                        // ==========================================
-                        // Mobile Avatar Override Section
-                        // ==========================================
                         EditorGUILayout.LabelField("Mobile Avatar (Android / iOS)", EditorStyles.boldLabel);
-
-                        EditorGUI.BeginChangeCheck();
-                        mo.AndroidTargetRenderer = (Renderer)EditorGUILayout.ObjectField("Mobile Renderer", mo.AndroidTargetRenderer, typeof(Renderer), true);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            if (mo.AndroidTargetRenderer != null)
-                            {
-                                GameObject root = _androidAvatarRoot ?? _iosAvatarRoot ?? _avatarRoot;
-                                if (root != null && mo.AndroidTargetRenderer.transform.IsChildOf(root.transform))
-                                {
-                                    mo.AndroidRendererPath = AnimationUtility.CalculateTransformPath(mo.AndroidTargetRenderer.transform, root.transform);
-                                }
-                                else
-                                {
-                                    Debug.LogWarning("[VRC_Batch_Uploader] Mobile Renderer must be a child of the Mobile avatar root.");
-                                    mo.AndroidTargetRenderer = null;
-                                    mo.AndroidRendererPath = "";
-                                }
-                            }
-                            else
-                            {
-                                mo.AndroidRendererPath = "";
-                            }
-                            dirty = true;
-                        }
-
-                        if (mo.AndroidTargetRenderer != null && mo.AndroidTargetRenderer.sharedMaterials.Length > 0)
-                        {
-                            int maxSlot = mo.AndroidTargetRenderer.sharedMaterials.Length - 1;
-                            mo.AndroidMaterialSlot = Mathf.Clamp(mo.AndroidMaterialSlot, 0, maxSlot);
-
-                            string currentMatName = "None";
-                            Material currentMat = mo.AndroidTargetRenderer.sharedMaterials[mo.AndroidMaterialSlot];
-                            if (currentMat != null) currentMatName = currentMat.name;
-
-                            EditorGUI.BeginChangeCheck();
-                            mo.AndroidMaterialSlot = EditorGUILayout.IntSlider($"Mobile Slot ({currentMatName})", mo.AndroidMaterialSlot, 0, maxSlot);
-                            if (EditorGUI.EndChangeCheck()) dirty = true;
-                        }
-                        else
-                        {
-                            EditorGUILayout.LabelField("Mobile Slot", "No materials found");
-                        }
-
-                        EditorGUI.BeginChangeCheck();
-                        mo.AndroidOverrideMat = (Material)EditorGUILayout.ObjectField("Mobile Material", mo.AndroidOverrideMat, typeof(Material), false);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            if (mo.AndroidOverrideMat != null)
-                            {
-                                AssetDatabase.TryGetGUIDAndLocalFileIdentifier(mo.AndroidOverrideMat, out string guid, out long _);
-                                mo.AndroidOverrideMatGuid = guid;
-                            }
-                            else
-                            {
-                                mo.AndroidOverrideMatGuid = "";
-                            }
-                            dirty = true;
-                        }
+                        dirty |= DrawOverrideTarget("Mobile Renderer", "Mobile Slot", "Mobile Material",
+                            Or(Or(_androidAvatarRoot, _iosAvatarRoot), _avatarRoot), "Mobile avatar root",
+                            ref mo.AndroidTargetRenderer, ref mo.AndroidRendererPath, ref mo.AndroidMaterialSlot,
+                            ref mo.AndroidOverrideMat, ref mo.AndroidOverrideMatGuid);
                     }
                     else
                     {
-                        // Single Avatar Root mode
-                        EditorGUI.BeginChangeCheck();
-                        mo.TargetRenderer = (Renderer)EditorGUILayout.ObjectField("Renderer", mo.TargetRenderer, typeof(Renderer), true);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            if (mo.TargetRenderer != null)
-                            {
-                                if (_avatarRoot != null && mo.TargetRenderer.transform.IsChildOf(_avatarRoot.transform))
-                                {
-                                    mo.RendererPath = AnimationUtility.CalculateTransformPath(mo.TargetRenderer.transform, _avatarRoot.transform);
-                                }
-                                else
-                                {
-                                    Debug.LogWarning("[VRC_Batch_Uploader] Renderer must be a child of the avatar root.");
-                                    mo.TargetRenderer = null;
-                                    mo.RendererPath = "";
-                                }
-                            }
-                            else
-                            {
-                                mo.RendererPath = "";
-                            }
-                            dirty = true;
-                        }
-
-                        if (mo.TargetRenderer != null && mo.TargetRenderer.sharedMaterials.Length > 0)
-                        {
-                            int maxSlot = mo.TargetRenderer.sharedMaterials.Length - 1;
-                            mo.MaterialSlot = Mathf.Clamp(mo.MaterialSlot, 0, maxSlot);
-
-                            string currentMatName = "None";
-                            Material currentMat = mo.TargetRenderer.sharedMaterials[mo.MaterialSlot];
-                            if (currentMat != null) currentMatName = currentMat.name;
-
-                            EditorGUI.BeginChangeCheck();
-                            mo.MaterialSlot = EditorGUILayout.IntSlider($"Slot ({currentMatName})", mo.MaterialSlot, 0, maxSlot);
-                            if (EditorGUI.EndChangeCheck()) dirty = true;
-                        }
-                        else
-                        {
-                            EditorGUILayout.LabelField("Slot", "No materials found");
-                        }
-
-                        EditorGUI.BeginChangeCheck();
-                        mo.OverrideMat = (Material)EditorGUILayout.ObjectField("Override Material", mo.OverrideMat, typeof(Material), false);
-                        if (EditorGUI.EndChangeCheck())
-                        {
-                            if (mo.OverrideMat != null)
-                            {
-                                AssetDatabase.TryGetGUIDAndLocalFileIdentifier(mo.OverrideMat, out string guid, out long _);
-                                mo.OverrideMatGuid = guid;
-                            }
-                            else
-                            {
-                                mo.OverrideMatGuid = "";
-                            }
-                            dirty = true;
-                        }
+                        dirty |= DrawOverrideTarget("Renderer", "Slot", "Override Material",
+                            _avatarRoot, "avatar root",
+                            ref mo.TargetRenderer, ref mo.RendererPath, ref mo.MaterialSlot,
+                            ref mo.OverrideMat, ref mo.OverrideMatGuid);
                     }
                 }
             }
@@ -1211,6 +1006,115 @@ namespace Synthos.BatchUploader
                 SaveMaterialOverrides(entry);
                 Repaint();
             }
+        }
+
+        /// <summary>Resolves the saved renderer paths and material GUIDs of an override into live references.</summary>
+        private void ResolveMaterialOverride(MaterialOverride mo)
+        {
+            // PC Renderer
+            if (!string.IsNullOrEmpty(mo.RendererPath))
+            {
+                var pcRoot = _uploadMode == UploadMode.SameProject ? Or(_pcAvatarRoot, _avatarRoot) : _avatarRoot;
+                if (pcRoot != null)
+                {
+                    Transform t = pcRoot.transform.Find(mo.RendererPath);
+                    if (t != null) mo.TargetRenderer = t.GetComponent<Renderer>();
+                }
+                if (mo.TargetRenderer == null)
+                {
+                    foreach (var av in GetActivePlatformAvatars())
+                    {
+                        Transform t = av.transform.Find(mo.RendererPath);
+                        if (t != null) { mo.TargetRenderer = t.GetComponent<Renderer>(); break; }
+                    }
+                }
+            }
+
+            // Mobile Renderer
+            var mobileRoot = Or(_androidAvatarRoot, _iosAvatarRoot);
+            string mobilePath = !string.IsNullOrEmpty(mo.AndroidRendererPath) ? mo.AndroidRendererPath : mo.RendererPath;
+            if (!string.IsNullOrEmpty(mobilePath) && mobileRoot != null)
+            {
+                Transform t = mobileRoot.transform.Find(mobilePath);
+                if (t != null) mo.AndroidTargetRenderer = t.GetComponent<Renderer>();
+            }
+
+            mo.OverrideMat        = LoadMaterialByGuid(mo.OverrideMatGuid);
+            mo.AndroidOverrideMat = LoadMaterialByGuid(mo.AndroidOverrideMatGuid);
+            mo.Resolved = true;
+        }
+
+        private static Material LoadMaterialByGuid(string guid)
+        {
+            if (string.IsNullOrEmpty(guid)) return null;
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            return string.IsNullOrEmpty(path) ? null : AssetDatabase.LoadAssetAtPath<Material>(path);
+        }
+
+        /// <summary>Draws the renderer / slot / material fields of one side of a material override.
+        /// Returns true when anything changed.</summary>
+        private static bool DrawOverrideTarget(string rendererLabel, string slotLabel, string materialLabel,
+            GameObject root, string rootDescription,
+            ref Renderer renderer, ref string rendererPath, ref int slot,
+            ref Material mat, ref string matGuid)
+        {
+            bool dirty = false;
+
+            EditorGUI.BeginChangeCheck();
+            renderer = (Renderer)EditorGUILayout.ObjectField(rendererLabel, renderer, typeof(Renderer), true);
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (renderer != null)
+                {
+                    if (root != null && renderer.transform.IsChildOf(root.transform))
+                    {
+                        rendererPath = AnimationUtility.CalculateTransformPath(renderer.transform, root.transform);
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"[VRC_Batch_Uploader] {rendererLabel} must be a child of the {rootDescription}.");
+                        renderer = null;
+                        rendererPath = "";
+                    }
+                }
+                else
+                {
+                    rendererPath = "";
+                }
+                dirty = true;
+            }
+
+            if (renderer != null && renderer.sharedMaterials.Length > 0)
+            {
+                int maxSlot = renderer.sharedMaterials.Length - 1;
+                slot = Mathf.Clamp(slot, 0, maxSlot);
+
+                Material currentMat = renderer.sharedMaterials[slot];
+                string currentMatName = currentMat != null ? currentMat.name : "None";
+
+                EditorGUI.BeginChangeCheck();
+                slot = EditorGUILayout.IntSlider($"{slotLabel} ({currentMatName})", slot, 0, maxSlot);
+                if (EditorGUI.EndChangeCheck()) dirty = true;
+            }
+            else
+            {
+                EditorGUILayout.LabelField(slotLabel, "No materials found");
+            }
+
+            EditorGUI.BeginChangeCheck();
+            mat = (Material)EditorGUILayout.ObjectField(materialLabel, mat, typeof(Material), false);
+            if (EditorGUI.EndChangeCheck())
+            {
+                matGuid = "";
+                if (mat != null)
+                {
+                    AssetDatabase.TryGetGUIDAndLocalFileIdentifier(mat, out string guid, out long _);
+                    matGuid = guid;
+                }
+                dirty = true;
+            }
+
+            return dirty;
         }
 
         // ---- Blendshape foldout ----
@@ -1412,8 +1316,7 @@ namespace Synthos.BatchUploader
 
                     if (GUILayout.Button("Cancel", GUILayout.Width(66), GUILayout.Height(30)))
                     {
-                        _cts?.Cancel();
-                        CancelBatch();
+                        RequestCancelBatch();
                     }
                 }
             }
@@ -1432,7 +1335,7 @@ namespace Synthos.BatchUploader
         private string GetActiveMatOverridesFilePath(GameObject avRoot)
         {
             string safeName = avRoot != null ? string.Join("_", avRoot.name.Split(Path.GetInvalidFileNameChars())) : "Global";
-            
+
             // Check legacy path first in case an interrupted upload left a backup
             string legacyPath = Path.Combine("Assets/VRC_Batch_Uploader/Data", $"{safeName}_BaseMaterials.json");
             if (File.Exists(legacyPath)) return legacyPath;
@@ -1442,19 +1345,21 @@ namespace Synthos.BatchUploader
             return Path.Combine(dir, $"{safeName}_BaseMaterials.json");
         }
 
-        private void RevertActiveMaterialOverrides(bool clearAfter = true)
+        /// <summary>Restores the base materials and blendshapes that the active outfit's overrides replaced.</summary>
+        private void RevertActiveOverrides(bool clearAfter = true)
         {
             foreach (var avRoot in GetActivePlatformAvatars())
             {
-                RevertActiveMaterialOverridesFor(avRoot, clearAfter);
+                RevertActiveOverridesFor(avRoot, clearAfter);
             }
         }
 
-        private void RevertActiveMaterialOverridesFor(GameObject avRoot, bool clearAfter)
+        private void RevertActiveOverridesFor(GameObject avRoot, bool clearAfter)
         {
             if (avRoot == null) return;
 
-            string json = SessionState.GetString("Shiro_ActiveMatOverrides_" + avRoot.name, "");
+            string sessionKey = "Shiro_ActiveMatOverrides_" + avRoot.name;
+            string json = SessionState.GetString(sessionKey, "");
             string path = GetActiveMatOverridesFilePath(avRoot);
 
             if (File.Exists(path))
@@ -1464,44 +1369,31 @@ namespace Synthos.BatchUploader
 
             if (string.IsNullOrEmpty(json)) return;
 
-            var list = JsonUtility.FromJson<ActiveMatOverridesList>(json);
-            if (list == null || list.Overrides == null) return;
-
-            foreach (var ov in list.Overrides)
+            var backup = JsonUtility.FromJson<ActiveOverridesBackup>(json);
+            if (backup != null)
             {
-                Transform t = avRoot.transform.Find(ov.RendererPath);
-                if (t == null) continue;
-                Renderer r = t.GetComponent<Renderer>();
-                if (r == null) continue;
+                // Reverse order so a slot overridden twice ends up with its true original
+                if (backup.Overrides != null)
+                    for (int i = backup.Overrides.Count - 1; i >= 0; i--)
+                        RestoreMaterial(avRoot, backup.Overrides[i]);
 
-                Material originalMat = null;
-                if (!string.IsNullOrEmpty(ov.OriginalMatGuid))
-                {
-                    string matPath = AssetDatabase.GUIDToAssetPath(ov.OriginalMatGuid);
-                    if (!string.IsNullOrEmpty(matPath))
-                        originalMat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
-                }
-
-                var mats = r.sharedMaterials;
-                if (ov.Slot >= 0 && ov.Slot < mats.Length)
-                {
-                    Undo.RecordObject(r, "Revert material override");
-                    mats[ov.Slot] = originalMat;
-                    r.sharedMaterials = mats;
-                    EditorUtility.SetDirty(r);
-                }
+                if (backup.BlendShapes != null)
+                    RestoreBlendShapes(avRoot, backup.BlendShapes);
             }
 
             if (clearAfter)
             {
-                SessionState.SetString("Shiro_ActiveMatOverrides_" + avRoot.name, "");
+                SessionState.SetString(sessionKey, "");
                 if (File.Exists(path))
                 {
                     try
                     {
                         File.Delete(path);
-                        File.Delete(path + ".meta");
-                        AssetDatabase.Refresh();
+                        if (path.StartsWith("Assets"))
+                        {
+                            File.Delete(path + ".meta");
+                            AssetDatabase.Refresh();
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -1511,11 +1403,131 @@ namespace Synthos.BatchUploader
             }
         }
 
-        private void ApplyMaterialOverridesFor(OutfitEntry target, GameObject avRoot)
+        private static void RestoreMaterial(GameObject avRoot, ActiveMatOverride ov)
         {
-            if (target.MaterialOverrides.Count == 0 || avRoot == null) return;
+            Transform t = avRoot.transform.Find(ov.RendererPath);
+            if (t == null) return;
+            Renderer r = t.GetComponent<Renderer>();
+            if (r == null) return;
 
-            var activeList = new ActiveMatOverridesList();
+            var mats = r.sharedMaterials;
+            if (ov.Slot < 0 || ov.Slot >= mats.Length) return;
+
+            if (!TryResolveOriginalMaterial(ov, out Material originalMat))
+            {
+                Debug.LogWarning($"[OutfitBatchUploader] Could not find the original material for '{ov.RendererPath}' slot {ov.Slot} - leaving the slot unchanged.");
+                return;
+            }
+
+            Undo.RecordObject(r, "Revert material override");
+            mats[ov.Slot] = originalMat;
+            r.sharedMaterials = mats;
+            EditorUtility.SetDirty(r);
+        }
+
+        /// <summary>Resolves the material a slot held before an override.
+        /// Returns true with a null material when the slot was originally empty.</summary>
+        private static bool TryResolveOriginalMaterial(ActiveMatOverride ov, out Material mat)
+        {
+            mat = null;
+
+            // Exact object id - also covers sub-assets (e.g. FBX-embedded materials) and scene-only materials
+            if (!string.IsNullOrEmpty(ov.OriginalMatId))
+            {
+                if (GlobalObjectId.TryParse(ov.OriginalMatId, out var id))
+                    mat = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(id) as Material;
+                return mat != null;
+            }
+
+            // Backups written before 1.1.0-preview.3 only stored the asset GUID
+            if (!string.IsNullOrEmpty(ov.OriginalMatGuid))
+            {
+                mat = LoadMaterialByGuid(ov.OriginalMatGuid);
+                return mat != null;
+            }
+
+            return true;
+        }
+
+        private static void RestoreBlendShapes(GameObject avRoot, List<ActiveBlendShape> shapes)
+        {
+            foreach (var group in shapes.GroupBy(s => s.SkinPath ?? ""))
+            {
+                Transform t = group.Key.Length == 0 ? avRoot.transform : avRoot.transform.Find(group.Key);
+                var skin = t != null ? t.GetComponent<SkinnedMeshRenderer>() : null;
+                if (skin == null || skin.sharedMesh == null) continue;
+
+                Undo.RecordObject(skin, "Revert blendshape overrides");
+                foreach (var bs in group)
+                {
+                    int idx = skin.sharedMesh.GetBlendShapeIndex(bs.Name);
+                    if (idx >= 0) skin.SetBlendShapeWeight(idx, bs.Value);
+                }
+                EditorUtility.SetDirty(skin);
+            }
+        }
+
+        /// <summary>Applies the outfit's blendshape and material overrides to one avatar root and backs up
+        /// the values they replace, so the next activation (or Restore Base) can put them back.</summary>
+        private void ApplyOverridesFor(OutfitEntry target, GameObject avRoot)
+        {
+            if (avRoot == null) return;
+
+            var backup = new ActiveOverridesBackup();
+            ApplyBlendShapeOverridesFor(target, avRoot, backup);
+            ApplyMaterialOverridesFor(target, avRoot, backup);
+
+            if (backup.Overrides.Count == 0 && backup.BlendShapes.Count == 0) return;
+
+            string json = JsonUtility.ToJson(backup);
+            SessionState.SetString("Shiro_ActiveMatOverrides_" + avRoot.name, json);
+
+            try
+            {
+                File.WriteAllText(GetActiveMatOverridesFilePath(avRoot), json);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[VRC_Batch_Uploader] Failed to save base materials/blendshapes backup: {ex.Message}");
+            }
+        }
+
+        private void ApplyBlendShapeOverridesFor(OutfitEntry target, GameObject avRoot, ActiveOverridesBackup backup)
+        {
+            if (target.BlendShapes.Count == 0) return;
+
+            var skin = GetSkinRendererForAvatar(avRoot);
+            if (skin == null || skin.sharedMesh == null) return;
+
+            string skinPath = skin.transform.IsChildOf(avRoot.transform)
+                ? AnimationUtility.CalculateTransformPath(skin.transform, avRoot.transform)
+                : null;
+
+            Undo.RecordObject(skin, "Set blendshapes for outfit");
+            var mesh = skin.sharedMesh;
+            foreach (var kv in target.BlendShapes)
+            {
+                int idx = mesh.GetBlendShapeIndex(kv.Key);
+                if (idx < 0) continue;
+
+                if (skinPath != null)
+                {
+                    backup.BlendShapes.Add(new ActiveBlendShape
+                    {
+                        SkinPath = skinPath,
+                        Name     = kv.Key,
+                        Value    = skin.GetBlendShapeWeight(idx)
+                    });
+                }
+                skin.SetBlendShapeWeight(idx, kv.Value);
+            }
+            EditorUtility.SetDirty(skin);
+        }
+
+        private void ApplyMaterialOverridesFor(OutfitEntry target, GameObject avRoot, ActiveOverridesBackup backup)
+        {
+            if (target.MaterialOverrides.Count == 0) return;
+
             bool isMobileRoot = (_uploadMode == UploadMode.SameProject) &&
                                 (avRoot == _androidAvatarRoot || avRoot == _iosAvatarRoot);
 
@@ -1539,52 +1551,33 @@ namespace Synthos.BatchUploader
                 if (r == null) continue;
 
                 var mats = r.sharedMaterials;
-                if (slot >= 0 && slot < mats.Length)
+                if (slot < 0 || slot >= mats.Length) continue;
+
+                Material overrideMat = LoadMaterialByGuid(targetGuid);
+                if (overrideMat == null) continue;
+
+                // Capture original
+                Material currentMat = mats[slot];
+                string currentGuid = "";
+                string currentId = "";
+                if (currentMat != null)
                 {
-                    Material overrideMat = null;
-                    string path = AssetDatabase.GUIDToAssetPath(targetGuid);
-                    if (!string.IsNullOrEmpty(path))
-                        overrideMat = AssetDatabase.LoadAssetAtPath<Material>(path);
-
-                    if (overrideMat == null) continue;
-
-                    // Capture original
-                    Material currentMat = mats[slot];
-                    string currentGuid = "";
-                    if (currentMat != null)
-                    {
-                        AssetDatabase.TryGetGUIDAndLocalFileIdentifier(currentMat, out currentGuid, out long localId);
-                    }
-
-                    activeList.Overrides.Add(new ActiveMatOverride
-                    {
-                        RendererPath = rendererPath,
-                        Slot = slot,
-                        OriginalMatGuid = currentGuid
-                    });
-
-                    Undo.RecordObject(r, "Apply material override");
-                    mats[slot] = overrideMat;
-                    r.sharedMaterials = mats;
-                    EditorUtility.SetDirty(r);
+                    AssetDatabase.TryGetGUIDAndLocalFileIdentifier(currentMat, out currentGuid, out long _);
+                    currentId = GlobalObjectId.GetGlobalObjectIdSlow(currentMat).ToString();
                 }
-            }
 
-            if (activeList.Overrides.Count > 0)
-            {
-                string json = JsonUtility.ToJson(activeList);
-                SessionState.SetString("Shiro_ActiveMatOverrides_" + avRoot.name, json);
-
-                try
+                backup.Overrides.Add(new ActiveMatOverride
                 {
-                    string path = GetActiveMatOverridesFilePath(avRoot);
-                    File.WriteAllText(path, json);
-                    AssetDatabase.ImportAsset(path);
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"[VRC_Batch_Uploader] Failed to save active base materials: {ex.Message}");
-                }
+                    RendererPath    = rendererPath,
+                    Slot            = slot,
+                    OriginalMatGuid = currentGuid,
+                    OriginalMatId   = currentId
+                });
+
+                Undo.RecordObject(r, "Apply material override");
+                mats[slot] = overrideMat;
+                r.sharedMaterials = mats;
+                EditorUtility.SetDirty(r);
             }
         }
 
@@ -1611,7 +1604,7 @@ namespace Synthos.BatchUploader
 
             foreach (var avRoot in targetAvatars)
             {
-                RevertActiveMaterialOverridesFor(avRoot, true);
+                RevertActiveOverridesFor(avRoot, true);
 
                 var outfitsTransform = FindDeepChild(avRoot.transform, _outfitsParentName);
                 if (outfitsTransform != null)
@@ -1645,22 +1638,7 @@ namespace Synthos.BatchUploader
                     }
                 }
 
-                // Apply blendshape overrides for this avatar root
-                var skin = GetSkinRendererForAvatar(avRoot);
-                if (skin != null && target.BlendShapes.Count > 0)
-                {
-                    Undo.RecordObject(skin, "Set blendshapes for outfit");
-                    var mesh = skin.sharedMesh;
-                    foreach (var kv in target.BlendShapes)
-                    {
-                        int idx = mesh.GetBlendShapeIndex(kv.Key);
-                        if (idx >= 0)
-                            skin.SetBlendShapeWeight(idx, kv.Value);
-                    }
-                    EditorUtility.SetDirty(skin);
-                }
-
-                ApplyMaterialOverridesFor(target, avRoot);
+                ApplyOverridesFor(target, avRoot);
             }
 
             Undo.CollapseUndoOperations(group);
@@ -2130,7 +2108,12 @@ namespace Synthos.BatchUploader
 
             if (EditorUserBuildSettings.activeBuildTarget != target)
             {
-                EditorUserBuildSettings.SwitchActiveBuildTarget(group, target);
+                if (!EditorUserBuildSettings.SwitchActiveBuildTarget(group, target) ||
+                    EditorUserBuildSettings.activeBuildTarget != target)
+                {
+                    Debug.LogError($"[OutfitBatchUploader] Switching the build target to {target} failed.");
+                    return false;
+                }
             }
             return true;
         }
@@ -2200,8 +2183,6 @@ namespace Synthos.BatchUploader
                 return;
             }
 
-            SaveBlendshapeSnapshot();
-
             // Save queue into Domain-Reload-proof SessionState
             SessionState.SetString(SESSION_BATCH_QUEUE, string.Join("\n", queue));
             SessionState.SetInt(SESSION_BATCH_TOTAL, queue.Count);
@@ -2224,6 +2205,10 @@ namespace Synthos.BatchUploader
             if (!SessionState.GetBool(SESSION_BATCH_ACTIVE, false)) return;
             _isBatchUploading = true;
             Repaint();
+
+            // Error recovery starts a fresh run from inside the old run's catch, so only the latest run clears the flag
+            int runId = ++_queueRunId;
+            _queueLoopRunning = true;
 
             try
             {
@@ -2262,11 +2247,12 @@ namespace Synthos.BatchUploader
                         Repaint();
                         
                         if (!SwitchPlatform(platform))
-                            throw new Exception($"Platform {platform} is not installed or supported.");
-                        
-                        // IMPORTANT: The Platform Switch forces a Unity Domain Reload here. 
-                        // All code execution is about to die. We wire up a backup hook to resume just in case 
-                        // the switch finishes instantaneously without a reload, then intentionally exit.
+                            throw new Exception($"Could not switch to {platform} - is the build support module installed?");
+
+                        // IMPORTANT: The Platform Switch forces a Unity Domain Reload here.
+                        // All code execution is about to die. We wire up a backup hook to resume just in case
+                        // the switch finishes without a reload (delayed so it can't race a pending reload), then intentionally exit.
+                        _resumeNotBefore = EditorApplication.timeSinceStartup + 3.0;
                         EditorApplication.update += HandleResumeBatch;
                         return; 
                     }
@@ -2279,6 +2265,8 @@ namespace Synthos.BatchUploader
                     if (outfit == null)
                     {
                         // If outfit was deleted from scene mid-batch, skip and continue
+                        Debug.LogWarning($"[OutfitBatchUploader] '{outfitName}' ({platform}) is no longer in the scene - skipped.");
+                        AddSkipped($"{outfitName} ({platform}) - not found in scene");
                         queue.RemoveAt(0);
                         SessionState.SetString(SESSION_BATCH_QUEUE, string.Join("\n", queue));
                         SessionState.SetInt(SESSION_BATCH_INDEX, currentIndex + 1);
@@ -2311,23 +2299,33 @@ namespace Synthos.BatchUploader
                     
                     var avatar = await VRCApi.GetAvatar(blueprintId, cancellationToken: _cts.Token);
 
-                    // Set avatar description to version number if it's different
+                    // Swap the previously uploaded version for the new one inside the description
                     string versionToSet = SessionState.GetString(SESSION_BATCH_VERSION, ""); // Use the version captured at batch start
 
                     // Only attempt to change the description if a version was actually typed in (not blank)
                     if (!string.IsNullOrWhiteSpace(versionToSet))
                     {
-                        if (avatar.Description != versionToSet)
+                        string previousVersion = AvatarVersionManager.GetUploadedVersion(blueprintId);
+                        string newDesc = AvatarVersionManager.UpdateVersionInDescription(avatar.Description, previousVersion, versionToSet);
+                        if (newDesc == null)
                         {
-                            avatar.Description = versionToSet;
+                            Debug.LogWarning($"[OutfitBatchUploader] '{outfitName}': could not find the old version " +
+                                             $"{(string.IsNullOrEmpty(previousVersion) ? "" : $"\"{previousVersion}\" ")}in the description - left it unchanged.");
+                        }
+                        else if (newDesc != avatar.Description)
+                        {
+                            avatar.Description = newDesc;
                             Debug.Log($"[OutfitBatchUploader] Updating '{outfitName}' description to version: {versionToSet}");
                         }
-                        
+
                         // Save it for this specific outfit's blueprint ID so it's remembered across projects!
                         AvatarVersionManager.SetVersion(blueprintId, versionToSet);
                     }
 
                     await builder.BuildAndUpload(targetAvatarRoot, avatar, cancellationToken: _cts.Token);
+
+                    if (!string.IsNullOrWhiteSpace(versionToSet))
+                        AvatarVersionManager.SetUploadedVersion(blueprintId, versionToSet);
 
                     // Successful upload! Pop from queue
                     _batchSubProgress = 1.0f;
@@ -2348,10 +2346,17 @@ namespace Synthos.BatchUploader
             {
                 HandleBatchError(ex);
             }
+            finally
+            {
+                if (runId == _queueRunId) _queueLoopRunning = false;
+            }
         }
 
         private void HandleBatchError(Exception ex)
         {
+            // An error caused by (or racing) a user cancel is just a cancel
+            if (_cts != null && _cts.IsCancellationRequested) { CancelBatch(); return; }
+
             string queueStr = SessionState.GetString(SESSION_BATCH_QUEUE, "");
             if (string.IsNullOrWhiteSpace(queueStr)) { FinishBatch(); return; }
 
@@ -2360,10 +2365,9 @@ namespace Synthos.BatchUploader
             string outfitName = parts[0];
             VRCPlatform platform = (VRCPlatform)Enum.Parse(typeof(VRCPlatform), parts[2]);
 
-            bool isValidation = ex.GetType().Name.Contains("Validation") || 
-                                ex.Message.Contains("bone") || ex.Message.Contains("Bone") || 
-                                ex.Message.Contains("rig") || ex.Message.Contains("humanoid") || 
-                                ex.Message.Contains("Chest") || ex.Message.Contains("validation");
+            // Only the SDK's own validation / build-blocked exceptions count as content problems to auto-skip
+            string exType = ex.GetType().Name;
+            bool isValidation = exType == "ValidationException" || exType == "BuildBlockedException";
 
             string shortMsg = ex.Message.Length > 120 ? ex.Message.Substring(0, 120) + "…" : ex.Message;
             string logMsg   = $"[OutfitBatchUploader] '{outfitName}' ({platform}) failed: {ex}";
@@ -2377,34 +2381,28 @@ namespace Synthos.BatchUploader
             {
                 Debug.LogWarning(logMsg);
                 SetStatus($"Skipped {outfitName} — validation error (see Console)", MessageType.Warning);
-
-                string skipped = SessionState.GetString(SESSION_SKIPPED, "");
-                skipped += $"{outfitName} ({platform})\n";
-                SessionState.SetString(SESSION_SKIPPED, skipped);
-
+                AddSkipped($"{outfitName} ({platform})");
                 PopQueueAndContinue(queue);
             }
             else if (proceedOnError && !isDirectUpload)
             {
                 Debug.LogWarning(logMsg);
                 SetStatus($"Skipped {outfitName} ({platform}) — error: {shortMsg}", MessageType.Warning);
-
-                string skipped = SessionState.GetString(SESSION_SKIPPED, "");
-                skipped += $"{outfitName} ({platform})\n";
-                SessionState.SetString(SESSION_SKIPPED, skipped);
-
+                AddSkipped($"{outfitName} ({platform})");
                 PopQueueAndContinue(queue);
             }
             else
             {
                 Debug.LogError(logMsg);
-                SetStatus($"Error on {outfitName}: {shortMsg}", MessageType.Error);
 
                 if (isDirectUpload)
                 {
-                    CancelBatch();
+                    // Keep the outfit as the user selected it; just stop and show the error
+                    CancelBatch($"Error on {outfitName}: {shortMsg}", MessageType.Error, restoreBase: false);
                     return;
                 }
+
+                SetStatus($"Error on {outfitName}: {shortMsg}", MessageType.Error);
 
                 bool cont = EditorUtility.DisplayDialog(
                     "Upload Failed",
@@ -2413,17 +2411,19 @@ namespace Synthos.BatchUploader
 
                 if (cont)
                 {
-                    string skipped = SessionState.GetString(SESSION_SKIPPED, "");
-                    skipped += $"{outfitName} ({platform})\n";
-                    SessionState.SetString(SESSION_SKIPPED, skipped);
-
+                    AddSkipped($"{outfitName} ({platform})");
                     PopQueueAndContinue(queue);
                 }
                 else
                 {
-                    CancelBatch();
+                    CancelBatch($"Batch stopped after an error on {outfitName}: {shortMsg}", MessageType.Error);
                 }
             }
+        }
+
+        private static void AddSkipped(string line)
+        {
+            SessionState.SetString(SESSION_SKIPPED, SessionState.GetString(SESSION_SKIPPED, "") + line + "\n");
         }
 
         private void PopQueueAndContinue(List<string> queue)
@@ -2471,8 +2471,6 @@ namespace Synthos.BatchUploader
                 SessionState.SetBool(SESSION_PLAY_ERROR_SOUND_ON_WAKE, true);
             }
 
-            RestoreBlendshapeSnapshot();
-
             bool shouldReset = !isDirectUpload && _resetToFirstOutfit;
             if (shouldReset)
             {
@@ -2504,17 +2502,49 @@ namespace Synthos.BatchUploader
             }
         }
 
-        private void CancelBatch()
+        /// <summary>Cancel button: a running queue loop is only signalled, so it cleans up once the
+        /// current build has actually stopped. A queue waiting to resume is cleaned up right away.</summary>
+        private void RequestCancelBatch()
         {
+            if (_queueLoopRunning && _cts != null)
+            {
+                _cts.Cancel();
+                SetStatus("Cancelling — waiting for the current step to stop...", MessageType.Warning);
+                Repaint();
+            }
+            else
+            {
+                CancelBatch();
+            }
+        }
+
+        private void CancelBatch(string message = "Batch upload cancelled.", MessageType type = MessageType.Warning, bool restoreBase = true)
+        {
+            EditorApplication.update -= HandleResumeBatch;
             SessionState.SetBool(SESSION_BATCH_ACTIVE, false);
             SessionState.EraseBool(SESSION_IS_DIRECT_UPLOAD);
             SessionState.EraseBool(SESSION_RESET_ON_WAKE);
             _isBatchUploading = false;
-            RestoreBlendshapeSnapshot();
-            SetStatus("Batch upload cancelled.", MessageType.Warning);
-            Repaint();
 
-            RestoreInitialPlatform();
+            if (restoreBase)
+            {
+                // Don't leave the last outfit's material / blendshape overrides in the saved scene
+                RevertActiveOverrides(true);
+                EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
+                EditorSceneManager.SaveScene(SceneManager.GetActiveScene());
+            }
+
+            if (RestoreInitialPlatform())
+            {
+                // A domain reload is coming; show the message once it has finished
+                SessionState.SetString(SESSION_FINAL_STATUS_MSG, message);
+                SessionState.SetInt(SESSION_FINAL_STATUS_TYPE, (int)type);
+            }
+            else
+            {
+                SetStatus(message, type);
+            }
+            Repaint();
         }
 
         private bool RestoreInitialPlatform()
@@ -2527,45 +2557,11 @@ namespace Synthos.BatchUploader
             {
                 SetStatus($"Restoring initial platform to {initialPlat}...", MessageType.Info);
                 Repaint();
-                SwitchPlatform(initialPlat);
-                switched = true;
+                switched = SwitchPlatform(initialPlat);
             }
 
             SessionState.EraseString(SESSION_INITIAL_PLATFORM); // Clean up regardless
             return switched;
-        }
-
-        private void SaveBlendshapeSnapshot()
-        {
-            if (_skinRenderer == null || _skinRenderer.sharedMesh == null) return;
-            var mesh = _skinRenderer.sharedMesh;
-            var snap = new List<string>();
-            for (int i = 0; i < mesh.blendShapeCount; i++)
-                snap.Add($"{mesh.GetBlendShapeName(i)}:{_skinRenderer.GetBlendShapeWeight(i)}");
-            SessionState.SetString("ShiroOutfit_BSSnap", string.Join("\n", snap));
-        }
-
-        private void RestoreBlendshapeSnapshot()
-        {
-            if (_skinRenderer == null || _skinRenderer.sharedMesh == null) return;
-            string snapStr = SessionState.GetString("ShiroOutfit_BSSnap", "");
-            if (string.IsNullOrEmpty(snapStr)) return;
-
-            Undo.RecordObject(_skinRenderer, "Restore blendshapes after batch");
-            var mesh = _skinRenderer.sharedMesh;
-            foreach (string line in snapStr.Split('\n'))
-            {
-                if (string.IsNullOrEmpty(line)) continue;
-                var parts = line.Split(':');
-                if (parts.Length == 2 && float.TryParse(parts[1], out float w))
-                {
-                    int idx = mesh.GetBlendShapeIndex(parts[0]);
-                    if (idx >= 0) _skinRenderer.SetBlendShapeWeight(idx, w);
-                }
-            }
-            EditorUtility.SetDirty(_skinRenderer);
-            EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
-            SessionState.EraseString("ShiroOutfit_BSSnap");
         }
 
         // ============================================================
@@ -2666,13 +2662,25 @@ namespace Synthos.BatchUploader
         {
             public string RendererPath;
             public int Slot;
-            public string OriginalMatGuid;
+            public string OriginalMatGuid;   // kept so backups stay readable by older versions
+            public string OriginalMatId;     // GlobalObjectId - exact for sub-assets and scene-only materials
         }
 
         [Serializable]
-        private class ActiveMatOverridesList
+        private class ActiveBlendShape
+        {
+            public string SkinPath;          // relative to the avatar root ("" = the root itself)
+            public string Name;
+            public float Value;
+        }
+
+        /// <summary>Base values replaced by the active outfit's overrides, per avatar root
+        /// (stored in the *_BaseMaterials.json file; the name predates blendshape support).</summary>
+        [Serializable]
+        private class ActiveOverridesBackup
         {
             public List<ActiveMatOverride> Overrides = new List<ActiveMatOverride>();
+            public List<ActiveBlendShape> BlendShapes = new List<ActiveBlendShape>();
         }
 
         public enum VRCPlatform
@@ -2687,11 +2695,13 @@ namespace Synthos.BatchUploader
     {
         private static readonly string ConfigPath;
         private static Dictionary<string, string> _versions;
+        private static Dictionary<string, string> _uploaded;
 
         [Serializable]
         private class VersionData
         {
             public List<VersionEntry> versions = new List<VersionEntry>();
+            public List<VersionEntry> uploaded = new List<VersionEntry>();   // last version actually uploaded
         }
 
         [Serializable]
@@ -2700,6 +2710,10 @@ namespace Synthos.BatchUploader
             public string blueprintId;
             public string version;
         }
+
+        // A version-looking token: "v1", "V2.3", "1.0.2" (bare whole numbers are too ambiguous)
+        private static readonly Regex VersionTokenRegex =
+            new Regex(@"(?<![\w.])(?:[vV]\d+(?:\.\d+)*|\d+(?:\.\d+)+)(?![\w]|\.\d)");
 
         static AvatarVersionManager()
         {
@@ -2711,6 +2725,7 @@ namespace Synthos.BatchUploader
         private static void LoadVersions()
         {
             _versions = new Dictionary<string, string>();
+            _uploaded = new Dictionary<string, string>();
             if (!File.Exists(ConfigPath)) return;
 
             try
@@ -2722,6 +2737,12 @@ namespace Synthos.BatchUploader
                     foreach (var entry in data.versions)
                         if (!string.IsNullOrWhiteSpace(entry.blueprintId))
                             _versions[entry.blueprintId] = entry.version;
+                }
+                if (data?.uploaded != null)
+                {
+                    foreach (var entry in data.uploaded)
+                        if (!string.IsNullOrWhiteSpace(entry.blueprintId))
+                            _uploaded[entry.blueprintId] = entry.version;
                 }
             }
             catch (Exception ex)
@@ -2737,7 +2758,9 @@ namespace Synthos.BatchUploader
                 var data = new VersionData();
                 foreach (var kvp in _versions)
                     data.versions.Add(new VersionEntry { blueprintId = kvp.Key, version = kvp.Value });
-                
+                foreach (var kvp in _uploaded)
+                    data.uploaded.Add(new VersionEntry { blueprintId = kvp.Key, version = kvp.Value });
+
                 string json = JsonUtility.ToJson(data, true);
                 Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath));
                 File.WriteAllText(ConfigPath, json);
@@ -2761,12 +2784,54 @@ namespace Synthos.BatchUploader
             _versions[blueprintId] = version;
             SaveVersions();
         }
+
+        /// <summary>The version last written into this avatar's description by a successful upload.</summary>
+        public static string GetUploadedVersion(string blueprintId)
+        {
+            if (string.IsNullOrWhiteSpace(blueprintId)) return "";
+            _uploaded.TryGetValue(blueprintId, out string version);
+            return version ?? "";
+        }
+
+        public static void SetUploadedVersion(string blueprintId, string version)
+        {
+            if (string.IsNullOrWhiteSpace(blueprintId)) return;
+            _uploaded[blueprintId] = version;
+            SaveVersions();
+        }
+
+        /// <summary>
+        /// Replaces the old version inside a description with the new one, leaving the rest of the text alone.
+        /// Returns null when the old version can't be found (the caller leaves the description unchanged).
+        /// </summary>
+        public static string UpdateVersionInDescription(string description, string oldVersion, string newVersion)
+        {
+            if (string.IsNullOrWhiteSpace(description)) return newVersion;
+
+            if (!string.IsNullOrWhiteSpace(oldVersion))
+            {
+                if (oldVersion == newVersion) return description;
+
+                // Whole-token match: updating "1" must not touch "10", and "v1" must not touch "v1.1"
+                var oldRegex = new Regex(@"(?<![\w.])" + Regex.Escape(oldVersion) + @"(?![\w]|\.\d)");
+                if (!oldRegex.IsMatch(description)) return null;
+                return oldRegex.Replace(description, newVersion.Replace("$", "$$"));
+            }
+
+            // No upload recorded yet: only replace when there's exactly one version-looking token
+            var matches = VersionTokenRegex.Matches(description);
+            if (matches.Count != 1) return null;
+            var m = matches[0];
+            return description.Substring(0, m.Index) + newVersion + description.Substring(m.Index + m.Length);
+        }
     }
 
     [InitializeOnLoad]
     public static class BatchUploaderLegacyMigration
     {
         private const string MigrationPromptedKey = "Synthos_BatchUploader_Migrated_v1_0_0";
+        private const string LegacyDir = "Assets/VRC_Batch_Uploader";
+        private const string SettingsDir = "ProjectSettings/VRC_Batch_Uploader";
 
         static BatchUploaderLegacyMigration()
         {
@@ -2775,8 +2840,10 @@ namespace Synthos.BatchUploader
 
         private static void CheckLegacyInstallation()
         {
-            string legacyDir = "Assets/VRC_Batch_Uploader";
-            if (!Directory.Exists(legacyDir)) return;
+            if (!Directory.Exists(LegacyDir)) return;
+
+            // Copy legacy data out first; never offer to delete the folder unless that worked
+            if (!MigrateLegacyData()) return;
 
             // Only prompt once per project session
             if (SessionState.GetBool(MigrationPromptedKey, false)) return;
@@ -2786,18 +2853,70 @@ namespace Synthos.BatchUploader
                 "Synthos Batch Uploader",
                 "Synthos Batch Uploader is now active as a modern package.\n\n" +
                 "A legacy script folder was detected at 'Assets/VRC_Batch_Uploader'.\n\n" +
-                "All your outfit configs (Blueprint IDs, blendshapes, materials) are safely preserved in 'ProjectSettings/VRC_Batch_Uploader' and will not be affected.\n\n" +
-                "Would you like to delete the redundant 'Assets/VRC_Batch_Uploader' folder now?",
-                "Delete Legacy Folder",
+                "Its outfit data (material overrides and any in-progress base material backups) has been copied to 'ProjectSettings/VRC_Batch_Uploader'.\n\n" +
+                "Would you like to move the redundant 'Assets/VRC_Batch_Uploader' folder to the trash now?",
+                "Move to Trash",
                 "Keep for Now"
             );
 
             if (remove)
             {
-                AssetDatabase.DeleteAsset(legacyDir);
-                AssetDatabase.Refresh();
-                Debug.Log("[SYNTHOS BATCH UPLOADER] Cleaned up obsolete legacy folder: Assets/VRC_Batch_Uploader");
+                if (AssetDatabase.MoveAssetToTrash(LegacyDir))
+                    Debug.Log("[SYNTHOS BATCH UPLOADER] Moved obsolete legacy folder to the trash: Assets/VRC_Batch_Uploader");
+                else
+                    Debug.LogWarning("[SYNTHOS BATCH UPLOADER] Could not move Assets/VRC_Batch_Uploader to the trash - remove it manually.");
             }
+        }
+
+        /// <summary>
+        /// Copies legacy *_MatOverrides.json files to ProjectSettings (where the loader already looks first) and moves
+        /// in-progress *_BaseMaterials.json backups there. Returns false if anything failed.
+        /// </summary>
+        private static bool MigrateLegacyData()
+        {
+            string legacyData = Path.Combine(LegacyDir, "Data");
+            if (!Directory.Exists(legacyData)) return true;
+
+            bool ok = true;
+            bool movedAny = false;
+
+            foreach (string src in Directory.GetFiles(legacyData, "*_MatOverrides.json"))
+            {
+                try
+                {
+                    Directory.CreateDirectory(SettingsDir);
+                    string dst = Path.Combine(SettingsDir, Path.GetFileName(src));
+                    if (!File.Exists(dst)) File.Copy(src, dst);
+                }
+                catch (Exception ex)
+                {
+                    ok = false;
+                    Debug.LogError($"[SYNTHOS BATCH UPLOADER] Could not migrate {src}: {ex.Message}");
+                }
+            }
+
+            // Moved rather than copied: a stale copy left behind would later "restore" the wrong materials
+            foreach (string src in Directory.GetFiles(legacyData, "*_BaseMaterials.json"))
+            {
+                try
+                {
+                    string dstDir = Path.Combine(SettingsDir, "Data");
+                    Directory.CreateDirectory(dstDir);
+                    string dst = Path.Combine(dstDir, Path.GetFileName(src));
+                    if (File.Exists(dst)) File.Delete(dst);   // the legacy file is the one the tool was using
+                    File.Move(src, dst);
+                    if (File.Exists(src + ".meta")) File.Delete(src + ".meta");
+                    movedAny = true;
+                }
+                catch (Exception ex)
+                {
+                    ok = false;
+                    Debug.LogError($"[SYNTHOS BATCH UPLOADER] Could not migrate {src}: {ex.Message}");
+                }
+            }
+
+            if (movedAny) AssetDatabase.Refresh();
+            return ok;
         }
     }
 }

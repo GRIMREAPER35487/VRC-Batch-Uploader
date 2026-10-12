@@ -20,15 +20,20 @@ jobs:
       - name: Resolve Version and Package Name
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ] || [ "$GITHUB_REF_NAME" = "main" ]; then
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            # Release under the tag exactly as pushed (so "1.0.3" doesn't become "v1.0.3")
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG_NAME="$GITHUB_REF_NAME"
+          else
+            # Manual run from a branch: take the version from package.json
             VERSION=$(jq -r .version package.json)
+            TAG_NAME="v${VERSION}"
           fi
           PKG_NAME=$(jq -r .name package.json)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "PKG_NAME=$PKG_NAME" >> $GITHUB_OUTPUT
           echo "ZIP_NAME=${PKG_NAME}-${VERSION}.zip" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_OUTPUT
 
       - name: Create release zip
         run: |
