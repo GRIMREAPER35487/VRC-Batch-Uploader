@@ -2265,8 +2265,7 @@ namespace Synthos.BatchUploader
                     if (outfit == null)
                     {
                         // If outfit was deleted from scene mid-batch, skip and continue
-                        Debug.LogWarning($"[OutfitBatchUploader] '{outfitName}' ({platform}) is no longer in the scene - skipped.");
-                        AddSkipped($"{outfitName} ({platform}) - not found in scene");
+                        AddSkipped(outfitName, platform, "no longer in the scene");
                         queue.RemoveAt(0);
                         SessionState.SetString(SESSION_BATCH_QUEUE, string.Join("\n", queue));
                         SessionState.SetInt(SESSION_BATCH_INDEX, currentIndex + 1);
@@ -2369,8 +2368,9 @@ namespace Synthos.BatchUploader
             string exType = ex.GetType().Name;
             bool isValidation = exType == "ValidationException" || exType == "BuildBlockedException";
 
-            string shortMsg = ex.Message.Length > 120 ? ex.Message.Substring(0, 120) + "…" : ex.Message;
-            string logMsg   = $"[OutfitBatchUploader] '{outfitName}' ({platform}) failed: {ex}";
+            string reason   = GetFailureReason(ex);
+            string shortMsg = reason.Length > 120 ? reason.Substring(0, 120) + "…" : reason;
+            string logMsg   = $"[OutfitBatchUploader] '{outfitName}' ({platform}) failed: {reason}\n\n{ex}";
 
             PlayErrorSound();
 
@@ -2380,15 +2380,15 @@ namespace Synthos.BatchUploader
             if (isValidation)
             {
                 Debug.LogWarning(logMsg);
-                SetStatus($"Skipped {outfitName} — validation error (see Console)", MessageType.Warning);
-                AddSkipped($"{outfitName} ({platform})");
+                SetStatus($"Skipped {outfitName} — validation error: {shortMsg}", MessageType.Warning);
+                AddSkipped(outfitName, platform, $"validation error: {reason}");
                 PopQueueAndContinue(queue);
             }
             else if (proceedOnError && !isDirectUpload)
             {
                 Debug.LogWarning(logMsg);
                 SetStatus($"Skipped {outfitName} ({platform}) — error: {shortMsg}", MessageType.Warning);
-                AddSkipped($"{outfitName} ({platform})");
+                AddSkipped(outfitName, platform, reason);
                 PopQueueAndContinue(queue);
             }
             else
@@ -2411,7 +2411,7 @@ namespace Synthos.BatchUploader
 
                 if (cont)
                 {
-                    AddSkipped($"{outfitName} ({platform})");
+                    AddSkipped(outfitName, platform, reason);
                     PopQueueAndContinue(queue);
                 }
                 else
@@ -2421,9 +2421,50 @@ namespace Synthos.BatchUploader
             }
         }
 
-        private static void AddSkipped(string line)
+        private static void AddSkipped(string outfitName, VRCPlatform platform, string reason)
         {
-            SessionState.SetString(SESSION_SKIPPED, SessionState.GetString(SESSION_SKIPPED, "") + line + "\n");
+            // The skipped list is newline-separated, so keep each entry on one line
+            reason = Regex.Replace(reason ?? "", @"\s+", " ").Trim();
+            if (reason.Length == 0) reason = "unknown error";
+            if (reason.Length > 300) reason = reason.Substring(0, 300) + "…";
+
+            Debug.LogWarning($"[OutfitBatchUploader] Skipped '{outfitName}' ({platform}) - reason: {reason}");
+            SessionState.SetString(SESSION_SKIPPED, SessionState.GetString(SESSION_SKIPPED, "") +
+                                                    $"{outfitName} ({platform}) - {reason}\n");
+        }
+
+        /// <summary>
+        /// Digs the real cause out of an upload exception: unwraps wrapper exceptions and collects the SDK's
+        /// validation error list (ValidationException.Errors), which its Message alone doesn't include.
+        /// </summary>
+        private static string GetFailureReason(Exception ex)
+        {
+            while ((ex is AggregateException || ex is TargetInvocationException) && ex.InnerException != null)
+                ex = ex.InnerException;
+
+            var errors = new List<string>();
+            try
+            {
+                var type = ex.GetType();
+                object value = type.GetProperty("Errors", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ex)
+                            ?? type.GetField("Errors", BindingFlags.Public | BindingFlags.Instance)?.GetValue(ex);
+                if (value is System.Collections.IEnumerable list && !(value is string))
+                {
+                    foreach (var item in list)
+                    {
+                        string s = item?.ToString()?.Trim();
+                        if (!string.IsNullOrEmpty(s) && !errors.Contains(s)) errors.Add(s);
+                    }
+                }
+            }
+            catch { }
+
+            string message = ex.Message?.Trim() ?? "";
+            if (errors.Count == 0)
+                return string.IsNullOrEmpty(message) ? ex.GetType().Name : message;
+
+            string joined = string.Join("; ", errors);
+            return string.IsNullOrEmpty(message) || joined.Contains(message) ? joined : $"{message}: {joined}";
         }
 
         private void PopQueueAndContinue(List<string> queue)
