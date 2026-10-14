@@ -2429,8 +2429,47 @@ namespace Synthos.BatchUploader
             if (reason.Length > 300) reason = reason.Substring(0, 300) + "…";
 
             Debug.LogWarning($"[OutfitBatchUploader] Skipped '{outfitName}' ({platform}) - reason: {reason}");
+            // Stored as outfit<TAB>platform<TAB>reason so the summary can group by outfit (the reason has no tabs left)
             SessionState.SetString(SESSION_SKIPPED, SessionState.GetString(SESSION_SKIPPED, "") +
-                                                    $"{outfitName} ({platform}) - {reason}\n");
+                                                    $"{outfitName}\t{platform}\t{reason}\n");
+        }
+
+        /// <summary>
+        /// Builds the Skipped / Failed section, one bullet per outfit. Platforms that failed for the same reason share
+        /// a line; otherwise each platform gets its own line.
+        /// </summary>
+        private static string FormatSkippedSummary(string[] skippedLines)
+        {
+            var groups = skippedLines
+                .Select(line => line.Split(new[] { '\t' }, 3))
+                .Select(p => (outfit: p[0], platform: p.Length > 1 ? p[1] : "", reason: p.Length > 2 ? p[2] : ""))
+                .GroupBy(e => e.outfit)
+                .ToList();
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"Skipped / Failed ({skippedLines.Length} upload{(skippedLines.Length == 1 ? "" : "s")}, " +
+                      $"{groups.Count} outfit{(groups.Count == 1 ? "" : "s")}):");
+
+            foreach (var g in groups)
+            {
+                var entries = g.ToList();
+                bool sameReason = entries.All(e => e.reason == entries[0].reason);
+
+                if (sameReason)
+                {
+                    string platforms = string.Join(", ", entries.Select(e => e.platform).Where(p => p.Length > 0));
+                    sb.Append($"\n• {g.Key}{(platforms.Length > 0 ? " — " + platforms : "")}");
+                    if (entries[0].reason.Length > 0) sb.Append($"\n    {entries[0].reason}");
+                }
+                else
+                {
+                    sb.Append($"\n• {g.Key}");
+                    foreach (var e in entries)
+                        sb.Append($"\n    {e.platform}: {(e.reason.Length > 0 ? e.reason : "unknown error")}");
+                }
+            }
+
+            return sb.ToString();
         }
 
         /// <summary>
@@ -2494,8 +2533,7 @@ namespace Synthos.BatchUploader
                 : $"Queue complete — {succeeded}/{total} uploads finished.";
             if (skippedList.Length > 0)
             {
-                summary += $"\n\nSkipped / Failed ({skippedList.Length}):\n• " +
-                           string.Join("\n• ", skippedList) +
+                summary += "\n\n" + FormatSkippedSummary(skippedList) +
                            "\n\nFix the issues on those outfits and upload them separately.";
             }
 
