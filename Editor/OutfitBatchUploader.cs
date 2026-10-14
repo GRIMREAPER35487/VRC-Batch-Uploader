@@ -821,8 +821,260 @@ namespace Synthos.BatchUploader
                     {
                         AvatarVersionManager.SetVersion(mainId, _avatarVersion);
                     }
+
+                    int targets = GetDescriptionTargets().Count;
+                    using (new EditorGUI.DisabledScope(_isBatchUploading || _isUpdatingDescriptions || _isExpressBusy ||
+                                                       string.IsNullOrWhiteSpace(_avatarVersion) || targets == 0))
+                    {
+                        var content = new GUIContent(
+                            _isUpdatingDescriptions ? "Updating…" : $"Update Descriptions ({targets})",
+                            "Write the Base Version into the description of every outfit with \"Include in batch\" checked, " +
+                            "without building or uploading anything.");
+                        if (GUILayout.Button(content, EditorStyles.miniButtonLeft, GUILayout.Width(150)))
+                            _ = UpdateDescriptionsOnlyAsync();
+                    }
+
+                    using (new EditorGUI.DisabledScope(_isBatchUploading || _isUpdatingDescriptions || _isExpressBusy || targets == 0))
+                    {
+                        if (GUILayout.Button(new GUIContent("▾", "More description options"), EditorStyles.miniButtonRight, GUILayout.Width(20)))
+                        {
+                            var menu = new GenericMenu();
+                            if (string.IsNullOrWhiteSpace(_avatarVersion))
+                                menu.AddDisabledItem(new GUIContent("Update version only (set a Base Version first)"));
+                            else
+                                menu.AddItem(new GUIContent("Update version only"), false, () => _ = UpdateDescriptionsOnlyAsync());
+                            menu.AddItem(new GUIContent("Replace full description…"), false, () =>
+                                DescriptionOverrideWindow.Open(this, GetDescriptionTargets()));
+                            menu.ShowAsContext();
+                        }
+                    }
                 }
             }
+        }
+
+        private bool _isUpdatingDescriptions;
+
+        /// <summary>Lets the user type one description that replaces the whole description on every included outfit.</summary>
+        internal class DescriptionOverrideWindow : EditorWindow
+        {
+            private const string PREFS_LAST_TEXT = "Synthos_BatchUploader_DescriptionOverride";
+
+            private OutfitBatchUploader _owner;
+            private List<OutfitEntry> _targets;
+            private string _text = "";
+            private bool _loading;
+            private Vector2 _scroll;
+
+            internal static void Open(OutfitBatchUploader owner, List<OutfitEntry> targets)
+            {
+                var w = GetWindow<DescriptionOverrideWindow>(true, "Replace full description");
+                w._owner = owner;
+                w._targets = targets;
+                w._text = EditorPrefs.GetString(PREFS_LAST_TEXT, "");
+                w.minSize = new Vector2(420, 300);
+                w.Show();
+
+                // Nothing typed before: start from the first outfit's current description
+                if (string.IsNullOrEmpty(w._text) && targets.Count > 0 && APIUser.IsLoggedIn)
+                    _ = w.LoadCurrentAsync(targets[0]);
+            }
+
+            private async Task LoadCurrentAsync(OutfitEntry outfit)
+            {
+                _loading = true;
+                Repaint();
+                try
+                {
+                    var avatar = await VRCApi.GetAvatar(outfit.BlueprintId, forceRefresh: true);
+                    _text = avatar.Description ?? "";
+                    GUI.FocusControl(null);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[OutfitBatchUploader] Could not load the description for '{outfit.Name}': {GetFailureReason(ex)}");
+                }
+                finally
+                {
+                    _loading = false;
+                    Repaint();
+                }
+            }
+
+            private void OnGUI()
+            {
+                if (_owner == null || _targets == null) { Close(); return; }
+
+                EditorGUILayout.Space(4);
+                EditorGUILayout.LabelField(
+                    $"This text replaces the whole description on {_targets.Count} avatar(s): " +
+                    string.Join(", ", _targets.Select(t => t.Name)),
+                    EditorStyles.wordWrappedMiniLabel);
+                EditorGUILayout.LabelField(
+                    "Type {version} where the Base Version should go, so later version updates can find it.",
+                    EditorStyles.wordWrappedMiniLabel);
+                EditorGUILayout.Space(2);
+
+                using (new EditorGUI.DisabledScope(_loading))
+                {
+                    _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
+                    if (_loading)
+                        EditorGUILayout.TextArea("Loading current description…", GUILayout.ExpandHeight(true));
+                    else
+                        _text = EditorGUILayout.TextArea(_text, GUILayout.ExpandHeight(true));
+                    EditorGUILayout.EndScrollView();
+                }
+
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    using (new EditorGUI.DisabledScope(_loading || _targets.Count == 0 || !APIUser.IsLoggedIn))
+                    {
+                        if (GUILayout.Button($"Load from {(_targets.Count > 0 ? _targets[0].Name : "first outfit")}", GUILayout.Height(24)))
+                            _ = LoadCurrentAsync(_targets[0]);
+                    }
+
+                    GUILayout.FlexibleSpace();
+
+                    using (new EditorGUI.DisabledScope(_loading || string.IsNullOrWhiteSpace(_text)))
+                    {
+                        if (GUILayout.Button($"Replace on {_targets.Count} avatar(s)", GUILayout.Height(24), GUILayout.Width(170)))
+                        {
+                            bool ok = EditorUtility.DisplayDialog(
+                                "Replace descriptions",
+                                $"Replace the whole description on {_targets.Count} avatar(s) with this text?\n\nThis can't be undone from here.",
+                                "Replace", "Cancel");
+                            if (ok)
+                            {
+                                EditorPrefs.SetString(PREFS_LAST_TEXT, _text);
+                                var owner = _owner;
+                                string text = _text;
+                                Close();
+                                _ = owner.UpdateDescriptionsOnlyAsync(text);
+                                return;
+                            }
+                        }
+                    }
+
+                    if (GUILayout.Button("Cancel", GUILayout.Height(24), GUILayout.Width(70))) Close();
+                }
+                EditorGUILayout.Space(4);
+            }
+        }
+
+        /// <summary>One entry per blueprint ID (platforms share it) among the outfits included in the batch.</summary>
+        private List<OutfitEntry> GetDescriptionTargets()
+        {
+            return _outfits
+                .Where(o => o != null && o.IncludeInBatch && !string.IsNullOrWhiteSpace(o.BlueprintId))
+                .GroupBy(o => o.BlueprintId)
+                .Select(g => g.First())
+                .ToList();
+        }
+
+        /// <summary>
+        /// Swaps the old version for the Base Version in each included outfit's description through the VRChat API,
+        /// the same way an upload does, but without building. Failures are collected and listed like batch skips.
+        /// With fullDescription set, every description is replaced with that text instead ({version} = Base Version).
+        /// </summary>
+        private async Task UpdateDescriptionsOnlyAsync(string fullDescription = null)
+        {
+            if (!APIUser.IsLoggedIn)
+            {
+                PlayErrorSound();
+                SetStatus("Not logged in. Please open the VRChat SDK Control Panel and log in first.", MessageType.Error);
+                return;
+            }
+
+            bool replaceFully = fullDescription != null;
+            string versionToSet = (_avatarVersion ?? "").Trim();
+            var targets = GetDescriptionTargets();
+            if ((!replaceFully && string.IsNullOrWhiteSpace(versionToSet)) || targets.Count == 0) return;
+
+            if (replaceFully)
+                fullDescription = fullDescription.Replace("{version}", versionToSet);
+
+            // Only remember a version as written when the new text actually contains it, so later updates can find it
+            bool writesVersion = !string.IsNullOrWhiteSpace(versionToSet) &&
+                                 (!replaceFully || fullDescription.Contains(versionToSet));
+
+            _isUpdatingDescriptions = true;
+            int updated = 0, unchanged = 0;
+            var failed = new List<string>();
+
+            try
+            {
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    var outfit = targets[i];
+                    SetStatus($"[{i + 1}/{targets.Count}] Updating description for {outfit.Name}...", MessageType.Info);
+                    Repaint();
+
+                    try
+                    {
+                        var avatar = await VRCApi.GetAvatar(outfit.BlueprintId, forceRefresh: true);
+                        string previousVersion = AvatarVersionManager.GetUploadedVersion(outfit.BlueprintId);
+                        string newDesc = replaceFully
+                            ? fullDescription
+                            : AvatarVersionManager.UpdateVersionInDescription(avatar.Description, previousVersion, versionToSet);
+
+                        if (newDesc == null)
+                        {
+                            string reason = "could not find the old version " +
+                                            (string.IsNullOrEmpty(previousVersion) ? "" : $"\"{previousVersion}\" ") +
+                                            "in the description";
+                            Debug.LogWarning($"[OutfitBatchUploader] '{outfit.Name}': {reason} - left it unchanged.");
+                            failed.Add($"{outfit.Name} - {reason}");
+                            continue;
+                        }
+
+                        if (newDesc == avatar.Description)
+                        {
+                            unchanged++;
+                        }
+                        else
+                        {
+                            avatar.Description = newDesc;
+                            await VRCApi.UpdateAvatarInfo(outfit.BlueprintId, avatar);
+                            Debug.Log(replaceFully
+                                ? $"[OutfitBatchUploader] Replaced '{outfit.Name}' description."
+                                : $"[OutfitBatchUploader] Updated '{outfit.Name}' description to version: {versionToSet}");
+                            updated++;
+                        }
+
+                        if (writesVersion)
+                        {
+                            AvatarVersionManager.SetVersion(outfit.BlueprintId, versionToSet);
+                            AvatarVersionManager.SetUploadedVersion(outfit.BlueprintId, versionToSet);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        string reason = GetFailureReason(ex);
+                        Debug.LogWarning($"[OutfitBatchUploader] Could not update the description for '{outfit.Name}': {reason}\n\n{ex}");
+                        failed.Add($"{outfit.Name} - {reason}");
+                    }
+                }
+            }
+            finally
+            {
+                _isUpdatingDescriptions = false;
+            }
+
+            string summary = (replaceFully ? "Descriptions replaced" : $"Descriptions updated to {versionToSet}") +
+                             $" — {updated} changed, {unchanged} already up to date";
+            if (failed.Count > 0)
+            {
+                summary += $", {failed.Count} failed:\n• " + string.Join("\n• ", failed);
+                PlayErrorSound();
+                Debug.LogWarning($"[OutfitBatchUploader] {summary}");
+            }
+            else
+            {
+                summary += ".";
+                Debug.Log($"[OutfitBatchUploader] {summary}");
+            }
+
+            SetStatus(summary, failed.Count > 0 ? MessageType.Warning : MessageType.Info);
+            Repaint();
         }
 
         // ---- No outfits message ----
@@ -2790,9 +3042,12 @@ namespace Synthos.BatchUploader
             public string version;
         }
 
+        // VRChat stores the dots in descriptions as look-alikes (U+2024 "one dot leader"), so any of these counts as a dot
+        private const string Dot = @"[.․．]";
+
         // A version-looking token: "v1", "V2.3", "1.0.2" (bare whole numbers are too ambiguous)
         private static readonly Regex VersionTokenRegex =
-            new Regex(@"(?<![\w.])(?:[vV]\d+(?:\.\d+)*|\d+(?:\.\d+)+)(?![\w]|\.\d)");
+            new Regex(@"(?<![\w.․．])(?:[vV]\d+(?:" + Dot + @"\d+)*|\d+(?:" + Dot + @"\d+)+)(?![\w]|" + Dot + @"\d)");
 
         static AvatarVersionManager()
         {
@@ -2892,7 +3147,8 @@ namespace Synthos.BatchUploader
                 if (oldVersion == newVersion) return description;
 
                 // Whole-token match: updating "1" must not touch "10", and "v1" must not touch "v1.1"
-                var oldRegex = new Regex(@"(?<![\w.])" + Regex.Escape(oldVersion) + @"(?![\w]|\.\d)");
+                string oldPattern = Regex.Escape(oldVersion.Replace('․', '.').Replace('．', '.')).Replace(@"\.", Dot);
+                var oldRegex = new Regex(@"(?<![\w.․．])" + oldPattern + @"(?![\w]|" + Dot + @"\d)");
                 if (!oldRegex.IsMatch(description)) return null;
                 return oldRegex.Replace(description, newVersion.Replace("$", "$$"));
             }
