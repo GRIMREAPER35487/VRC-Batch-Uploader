@@ -59,6 +59,11 @@ namespace Synthos.BatchUploader
         private const string SESSION_BATCH_TOTAL      = "Shiro_BatchTotal";
         private const string SESSION_BATCH_INDEX      = "Shiro_BatchIndex";
         private const string SESSION_SKIPPED          = "Shiro_BatchSkipped";
+        private const string SESSION_SIZE_ADJUSTED    = "Shiro_BatchSizeAdjusted";
+        // Avatar Compressor's "Keep under the mobile size limit" reports (textures made smaller to fit,
+        // still over the limit): while the reader flag is set it adds them here instead of showing a popup
+        private const string COMPRESSOR_REPORT_READER = "Synthos.AvatarCompressor.SizeReportReader";
+        private const string COMPRESSOR_REPORTS       = "Synthos.AvatarCompressor.SizeReports";
         private const string SESSION_INITIAL_PLATFORM = "Shiro_InitialPlatform";
         private const string SESSION_FINAL_STATUS_MSG = "Shiro_FinalStatusMsg";
         private const string SESSION_FINAL_STATUS_TYPE = "Shiro_FinalStatusType";
@@ -2443,6 +2448,9 @@ namespace Synthos.BatchUploader
             SessionState.SetBool(SESSION_IS_DIRECT_UPLOAD, isDirectUpload);
             SessionState.SetBool(SESSION_PROCEED_ON_ERROR, _proceedOnError);
             SessionState.SetString(SESSION_SKIPPED, "");
+            SessionState.SetString(SESSION_SIZE_ADJUSTED, "");
+            SessionState.SetBool(COMPRESSOR_REPORT_READER, true);
+            SessionState.SetString(COMPRESSOR_REPORTS, "");
             SessionState.SetString(SESSION_INITIAL_PLATFORM, currentPlatform.ToString());
             SessionState.SetString(SESSION_BATCH_VERSION, _avatarVersion); // Capture the version from UI
 
@@ -2574,6 +2582,7 @@ namespace Synthos.BatchUploader
                     }
 
                     await builder.BuildAndUpload(targetAvatarRoot, avatar, cancellationToken: _cts.Token);
+                    CollectSizeReports(outfitName, platform);
 
                     if (!string.IsNullOrWhiteSpace(versionToSet))
                         AvatarVersionManager.SetUploadedVersion(blueprintId, versionToSet);
@@ -2615,6 +2624,7 @@ namespace Synthos.BatchUploader
             string[] parts = queue[0].Split('|');
             string outfitName = parts[0];
             VRCPlatform platform = (VRCPlatform)Enum.Parse(typeof(VRCPlatform), parts[2]);
+            CollectSizeReports(outfitName, platform);
 
             // Only the SDK's own validation / build-blocked exceptions count as content problems to auto-skip
             string exType = ex.GetType().Name;
@@ -2671,6 +2681,41 @@ namespace Synthos.BatchUploader
                     CancelBatch($"Batch stopped after an error on {outfitName}: {shortMsg}", MessageType.Error);
                 }
             }
+        }
+
+        /// <summary>
+        /// Moves Avatar Compressor's size reports for the upload that just ran into the batch's
+        /// "Adjusted to fit" list (outfit, platform, level, text), so the summary shows them.
+        /// </summary>
+        private static void CollectSizeReports(string outfitName, VRCPlatform platform)
+        {
+            string reports = SessionState.GetString(COMPRESSOR_REPORTS, "");
+            SessionState.SetString(COMPRESSOR_REPORTS, "");
+            foreach (string line in reports.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] p = line.Split(new[] { '\t' }, 2);
+                string level = p.Length > 1 ? p[0] : "I";
+                string text = (p.Length > 1 ? p[1] : p[0]).Replace('\t', ' ').Trim();
+                if (text.Length == 0) continue;
+                SessionState.SetString(SESSION_SIZE_ADJUSTED, SessionState.GetString(SESSION_SIZE_ADJUSTED, "") +
+                                                              $"{outfitName}\t{platform}\t{level}\t{text}\n");
+            }
+        }
+
+        /// <summary>The "Adjusted to fit" section: one bullet per outfit and platform.</summary>
+        private static string FormatSizeAdjustedSummary(string[] lines)
+        {
+            var entries = lines
+                .Select(line => line.Split(new[] { '\t' }, 4))
+                .Where(p => p.Length == 4)
+                .Select(p => (outfit: p[0], platform: p[1], over: p[2] == "W", text: p[3]))
+                .ToList();
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"Adjusted to fit the mobile size limit ({entries.Count} upload{(entries.Count == 1 ? "" : "s")}):");
+            foreach (var e in entries)
+                sb.Append($"\n• {e.outfit} — {e.platform}{(e.over ? " (still over the limit)" : "")}\n    {e.text}");
+            return sb.ToString();
         }
 
         private static void AddSkipped(string outfitName, VRCPlatform platform, string reason)
@@ -2789,7 +2834,14 @@ namespace Synthos.BatchUploader
                            "\n\nFix the issues on those outfits and upload them separately.";
             }
 
-            var finalType = skippedList.Length > 0 || succeeded < total ? MessageType.Warning : MessageType.Info;
+            var adjustedList = SessionState.GetString(SESSION_SIZE_ADJUSTED, "")
+                .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            ClearSizeReports();
+            if (adjustedList.Length > 0)
+                summary += "\n\n" + FormatSizeAdjustedSummary(adjustedList);
+
+            var finalType = skippedList.Length > 0 || succeeded < total || adjustedList.Length > 0
+                ? MessageType.Warning : MessageType.Info;
             SessionState.SetString(SESSION_FINAL_STATUS_MSG, summary);
             SessionState.SetInt(SESSION_FINAL_STATUS_TYPE, (int)finalType);
 
@@ -2812,7 +2864,7 @@ namespace Synthos.BatchUploader
             _isBatchUploading = false;
             _batchIndex = _batchTotal;
             
-            if (skippedList.Length > 0 || succeeded < total)
+            if (skippedList.Length > 0 || succeeded < total || adjustedList.Length > 0)
                 Debug.LogWarning($"[OutfitBatchUploader] {summary}");
 
             if (!RestoreInitialPlatform())
@@ -2854,6 +2906,7 @@ namespace Synthos.BatchUploader
             EditorApplication.update -= HandleResumeBatch;
             SessionState.SetBool(SESSION_BATCH_ACTIVE, false);
             SessionState.EraseBool(SESSION_IS_DIRECT_UPLOAD);
+            ClearSizeReports();
             SessionState.EraseBool(SESSION_RESET_ON_WAKE);
             _isBatchUploading = false;
 
@@ -2876,6 +2929,14 @@ namespace Synthos.BatchUploader
                 SetStatus(message, type);
             }
             Repaint();
+        }
+
+        /// <summary>Stops collecting Avatar Compressor's size reports: uploads outside a batch show its popup again.</summary>
+        private static void ClearSizeReports()
+        {
+            SessionState.EraseBool(COMPRESSOR_REPORT_READER);
+            SessionState.EraseString(COMPRESSOR_REPORTS);
+            SessionState.EraseString(SESSION_SIZE_ADJUSTED);
         }
 
         private bool RestoreInitialPlatform()
