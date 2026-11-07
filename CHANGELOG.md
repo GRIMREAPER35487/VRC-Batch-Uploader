@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Learning pass for Avatar Compressor's size limit** (Batch Upload section, on by default, shown only when Avatar Compressor 1.4.2 or newer is installed) - Avatar Compressor's "Keep under the mobile size limit" learns from each build how far its download prediction is off for each avatar. With this on, every Android/iOS outfit it hasn't learned yet (with the size limit on) is built once without uploading before that platform's uploads, so its real upload already fits close to the limit. Outfits it has learned don't get the extra build, so later batches run as before. A failed learning build is logged and the upload goes ahead. The status bar says "Learning upload size ... build only", the learning builds' size reports are left out of the summary, and they don't count as uploads.
+  - With Avatar Compressor 1.4.2-beta.7 or newer, learning happens on the uploads themselves instead: when an outfit is built without its learned correction (its first build, or the compressor sees it changed since: other settings, or new or edited textures) and the correction would change what is made smaller, the compressor stops the build once it has measured and learned, before anything is uploaded, and the uploader builds the same outfit again right away, once. Outfits that fit without shrinking anything aren't built twice, and outfits that changed are caught too.
 
 ## [1.1.0] - 2026-10-17
 

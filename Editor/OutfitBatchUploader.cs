@@ -64,6 +64,11 @@ namespace Synthos.BatchUploader
         // Build-only steps the queue runs for Avatar Compressor's size learning (not uploads)
         private const string SESSION_LEARNING_BUILDS  = "Shiro_BatchLearningBuilds";
         private const string LEARNING_STEP            = "learn";
+        // Avatar Compressor 1.4.2-beta.7+: while the reader flag is set, a build planned without the outfit's
+        // learned size correction is stopped once learned from, and the requested flag asks us to build it again
+        private const string COMPRESSOR_RETRY_READER    = "Synthos.AvatarCompressor.LearningRetryReader";
+        private const string COMPRESSOR_RETRY_REQUESTED = "Synthos.AvatarCompressor.LearningRetryRequested";
+        private const string SESSION_RETRIED_INDEX      = "Shiro_BatchRetriedIndex";
         // Avatar Compressor's "Keep under the mobile size limit" reports (textures made smaller to fit,
         // still over the limit): while the reader flag is set it adds them here instead of showing a popup
         private const string COMPRESSOR_REPORT_READER = "Synthos.AvatarCompressor.SizeReportReader";
@@ -1535,9 +1540,14 @@ namespace Synthos.BatchUploader
                 EditorGUI.BeginChangeCheck();
                 var learningContent = new GUIContent(
                     "Learning pass for Avatar Compressor's size limit",
-                    "Before uploading an Android/iOS outfit for the first time, build it once without uploading, so Avatar " +
-                    "Compressor's \"Keep under the mobile size limit\" learns how far its size prediction is off for that " +
-                    "outfit and the upload fits closer to the limit. Only outfits it hasn't learned yet get the extra build.");
+                    SizeLearningRetryAvailable
+                        ? "Avatar Compressor's \"Keep under the mobile size limit\" learns how far its size prediction is off for each " +
+                          "outfit. When an Android/iOS outfit is built without that (its first build, or it changed) and it would " +
+                          "change what is made smaller, the compressor stops the build once it has learned, and the outfit is built " +
+                          "again right away and uploaded with an exact plan. Outfits that fit easily aren't built twice."
+                        : "Before uploading an Android/iOS outfit for the first time, build it once without uploading, so Avatar " +
+                          "Compressor's \"Keep under the mobile size limit\" learns how far its size prediction is off for that " +
+                          "outfit and the upload fits closer to the limit. Only outfits it hasn't learned yet get the extra build.");
                 _sizeLearningPass = EditorGUILayout.ToggleLeft(learningContent, _sizeLearningPass);
                 if (EditorGUI.EndChangeCheck())
                     EditorPrefs.SetBool(PREFS_SIZE_LEARNING, _sizeLearningPass);
@@ -2422,6 +2432,26 @@ namespace Synthos.BatchUploader
 
         private static bool SizeLearningAvailable => NeedsLearningBuildMethod != null;
 
+        private static bool? _sizeLearningRetry;
+
+        /// <summary>
+        /// True when the installed Avatar Compressor can stop a build it planned without the outfit's
+        /// learned correction and ask for it to be built again (it then also catches changed outfits).
+        /// Older versions only get the build-only learning steps.
+        /// </summary>
+        private static bool SizeLearningRetryAvailable
+        {
+            get
+            {
+                if (_sizeLearningRetry == null)
+                {
+                    var type = NeedsLearningBuildMethod?.DeclaringType;
+                    _sizeLearningRetry = type?.GetField("RetryReaderKey", BindingFlags.Public | BindingFlags.Static) != null;
+                }
+                return _sizeLearningRetry.Value;
+            }
+        }
+
         private static bool NeedsSizeLearningBuild(GameObject avatarRoot, string blueprintId, BuildTarget target)
         {
             if (avatarRoot == null || NeedsLearningBuildMethod == null) return false;
@@ -2479,7 +2509,8 @@ namespace Synthos.BatchUploader
             foreach (var plat in platformOrder)
             {
                 // Build-only steps go first on each platform, so the uploads after them use what was learned
-                if (_sizeLearningPass && SizeLearningAvailable && plat != VRCPlatform.Windows)
+                // (with a compressor that can ask for a rebuild, learning happens on the uploads themselves)
+                if (_sizeLearningPass && SizeLearningAvailable && !SizeLearningRetryAvailable && plat != VRCPlatform.Windows)
                 {
                     var learnTarget = plat == VRCPlatform.Android ? BuildTarget.Android : BuildTarget.iOS;
                     var learnRoot = GetTargetAvatarForPlatform(plat);
@@ -2529,6 +2560,9 @@ namespace Synthos.BatchUploader
             SessionState.SetString(SESSION_SIZE_ADJUSTED, "");
             SessionState.SetInt(SESSION_LEARNING_BUILDS, learningBuilds);
             SessionState.SetBool(COMPRESSOR_REPORT_READER, true);
+            SessionState.SetBool(COMPRESSOR_RETRY_READER, _sizeLearningPass && SizeLearningRetryAvailable);
+            SessionState.SetBool(COMPRESSOR_RETRY_REQUESTED, false);
+            SessionState.SetInt(SESSION_RETRIED_INDEX, -1);
             SessionState.SetString(COMPRESSOR_REPORTS, "");
             SessionState.SetString(SESSION_INITIAL_PLATFORM, currentPlatform.ToString());
             SessionState.SetString(SESSION_BATCH_VERSION, _avatarVersion); // Capture the version from UI
@@ -2690,6 +2724,9 @@ namespace Synthos.BatchUploader
                     }
 
                     await builder.BuildAndUpload(targetAvatarRoot, avatar, cancellationToken: _cts.Token);
+                    // If the SDK swallowed Avatar Compressor's stop, nothing was uploaded: retry it like a thrown stop
+                    if (SessionState.GetBool(COMPRESSOR_RETRY_REQUESTED, false))
+                        throw new Exception("Avatar Compressor stopped the build to build it again with its learned size.");
                     CollectSizeReports(outfitName, platform);
 
                     if (!string.IsNullOrWhiteSpace(versionToSet))
@@ -2727,6 +2764,25 @@ namespace Synthos.BatchUploader
 
             string queueStr = SessionState.GetString(SESSION_BATCH_QUEUE, "");
             if (string.IsNullOrWhiteSpace(queueStr)) { FinishBatch(); return; }
+
+            // Avatar Compressor stopped the build after learning this outfit's size: build it again, once
+            if (SessionState.GetBool(COMPRESSOR_RETRY_REQUESTED, false))
+            {
+                SessionState.SetBool(COMPRESSOR_RETRY_REQUESTED, false);
+                int index = SessionState.GetInt(SESSION_BATCH_INDEX, 0);
+                if (SessionState.GetInt(SESSION_RETRIED_INDEX, -1) != index)
+                {
+                    SessionState.SetInt(SESSION_RETRIED_INDEX, index);
+                    SessionState.SetString(COMPRESSOR_REPORTS, ""); // the stopped build's reports aren't the upload's
+                    string[] retryParts = queueStr.Split('\n')[0].Split('|');
+                    string retryName = retryParts[0];
+                    string retryPlatform = retryParts.Length > 2 ? retryParts[2] : "";
+                    Debug.Log($"[OutfitBatchUploader] '{retryName}' ({retryPlatform}): Avatar Compressor learned its upload size; building it again before uploading.");
+                    SetStatus($"Learned the upload size of {retryName} ({retryPlatform}) — building it again...", MessageType.Info);
+                    _ = ProcessBatchQueueAsync();
+                    return;
+                }
+            }
 
             var queue = queueStr.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries).ToList();
             string[] parts = queue[0].Split('|');
@@ -3047,6 +3103,10 @@ namespace Synthos.BatchUploader
             SessionState.EraseBool(COMPRESSOR_REPORT_READER);
             SessionState.EraseString(COMPRESSOR_REPORTS);
             SessionState.EraseString(SESSION_SIZE_ADJUSTED);
+            // Uploads outside a batch can't be built again, so the compressor must not stop them
+            SessionState.EraseBool(COMPRESSOR_RETRY_READER);
+            SessionState.EraseBool(COMPRESSOR_RETRY_REQUESTED);
+            SessionState.EraseInt(SESSION_RETRIED_INDEX);
         }
 
         private bool RestoreInitialPlatform()
