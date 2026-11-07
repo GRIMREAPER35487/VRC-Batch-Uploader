@@ -52,6 +52,7 @@ namespace Synthos.BatchUploader
         private const string PREFS_RESET_TO_FIRST    = "ShiroOutfitUploader_ResetToFirst";
         private const string PREFS_UPLOAD_MODE       = "ShiroOutfitUploader_UploadMode";
         private const string PREFS_LINK_ANDROID_IOS  = "ShiroOutfitUploader_LinkAndroidIOS";
+        private const string PREFS_SIZE_LEARNING     = "ShiroOutfitUploader_SizeLearningPass";
         private const string DEFAULT_PARENT_NAME     = "Outfits";
 
         private const string SESSION_BATCH_ACTIVE     = "Shiro_BatchActive";
@@ -60,6 +61,9 @@ namespace Synthos.BatchUploader
         private const string SESSION_BATCH_INDEX      = "Shiro_BatchIndex";
         private const string SESSION_SKIPPED          = "Shiro_BatchSkipped";
         private const string SESSION_SIZE_ADJUSTED    = "Shiro_BatchSizeAdjusted";
+        // Build-only steps the queue runs for Avatar Compressor's size learning (not uploads)
+        private const string SESSION_LEARNING_BUILDS  = "Shiro_BatchLearningBuilds";
+        private const string LEARNING_STEP            = "learn";
         // Avatar Compressor's "Keep under the mobile size limit" reports (textures made smaller to fit,
         // still over the limit): while the reader flag is set it adds them here instead of showing a popup
         private const string COMPRESSOR_REPORT_READER = "Synthos.AvatarCompressor.SizeReportReader";
@@ -96,6 +100,7 @@ namespace Synthos.BatchUploader
         private bool               _soundEnabled;
         private bool               _errorSoundEnabled = true;
         private bool               _proceedOnError;
+        private bool               _sizeLearningPass = true;
         private bool               _isBatchUploading;
         private int                _batchIndex;
         private int                _batchTotal;
@@ -134,6 +139,7 @@ namespace Synthos.BatchUploader
             _resetToFirstOutfit = EditorPrefs.GetBool(PREFS_RESET_TO_FIRST, true);
             _uploadMode         = (UploadMode)EditorPrefs.GetInt(PREFS_UPLOAD_MODE, (int)_uploadMode);
             _linkAndroidAndIOS  = EditorPrefs.GetBool(PREFS_LINK_ANDROID_IOS, _linkAndroidAndIOS);
+            _sizeLearningPass   = EditorPrefs.GetBool(PREFS_SIZE_LEARNING, true);
             ScanScene();
             EditorSceneManager.sceneOpened += OnSceneOpened;
             EditorApplication.hierarchyChanged += OnHierarchyChanged;
@@ -1524,6 +1530,18 @@ namespace Synthos.BatchUploader
                 if (EditorGUI.EndChangeCheck())
                     EditorPrefs.SetBool(PREFS_ERROR_SOUND_ENABLED, _errorSoundEnabled);
             }
+            if (SizeLearningAvailable)
+            {
+                EditorGUI.BeginChangeCheck();
+                var learningContent = new GUIContent(
+                    "Learning pass for Avatar Compressor's size limit",
+                    "Before uploading an Android/iOS outfit for the first time, build it once without uploading, so Avatar " +
+                    "Compressor's \"Keep under the mobile size limit\" learns how far its size prediction is off for that " +
+                    "outfit and the upload fits closer to the limit. Only outfits it hasn't learned yet get the extra build.");
+                _sizeLearningPass = EditorGUILayout.ToggleLeft(learningContent, _sizeLearningPass);
+                if (EditorGUI.EndChangeCheck())
+                    EditorPrefs.SetBool(PREFS_SIZE_LEARNING, _sizeLearningPass);
+            }
             EditorGUILayout.LabelField(
                 $"{ready} outfit(s) ready  (have a Blueprint ID + \"Include in batch\" checked)",
                 EditorStyles.miniLabel);
@@ -2375,6 +2393,49 @@ namespace Synthos.BatchUploader
             return true;
         }
 
+        // ---- Avatar Compressor size learning (optional, found by reflection) ----
+        private static bool _sizeLearningLookedUp;
+        private static MethodInfo _needsLearningBuild;
+
+        /// <summary>
+        /// Avatar Compressor's SizeLimitLearning.NeedsLearningBuild, when a version that learns per
+        /// avatar is installed. Looked up by name so this package doesn't depend on it.
+        /// </summary>
+        private static MethodInfo NeedsLearningBuildMethod
+        {
+            get
+            {
+                if (!_sizeLearningLookedUp)
+                {
+                    _sizeLearningLookedUp = true;
+                    var type = Type.GetType("dev.limitex.avatar.compressor.editor.size.SizeLimitLearning, dev.limitex.avatar-compressor.editor");
+                    _needsLearningBuild = type?.GetMethod(
+                        "NeedsLearningBuild",
+                        BindingFlags.Public | BindingFlags.Static,
+                        null,
+                        new[] { typeof(GameObject), typeof(string), typeof(BuildTarget) },
+                        null);
+                }
+                return _needsLearningBuild;
+            }
+        }
+
+        private static bool SizeLearningAvailable => NeedsLearningBuildMethod != null;
+
+        private static bool NeedsSizeLearningBuild(GameObject avatarRoot, string blueprintId, BuildTarget target)
+        {
+            if (avatarRoot == null || NeedsLearningBuildMethod == null) return false;
+            try
+            {
+                return (bool)NeedsLearningBuildMethod.Invoke(null, new object[] { avatarRoot, blueprintId ?? "", target });
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[OutfitBatchUploader] Couldn't ask Avatar Compressor about size learning: {ex.InnerException?.Message ?? ex.Message}");
+                return false;
+            }
+        }
+
         // ---- Cross-Domain Batch Queue System ----
         private async Task StartBatchAsync(List<OutfitEntry> targetOutfits, bool isDirectUpload = false)
         {
@@ -2414,8 +2475,25 @@ namespace Synthos.BatchUploader
                 platformOrder.Insert(0, currentPlatform); // Start with current platform to minimize switching
             }
 
+            int learningBuilds = 0;
             foreach (var plat in platformOrder)
             {
+                // Build-only steps go first on each platform, so the uploads after them use what was learned
+                if (_sizeLearningPass && SizeLearningAvailable && plat != VRCPlatform.Windows)
+                {
+                    var learnTarget = plat == VRCPlatform.Android ? BuildTarget.Android : BuildTarget.iOS;
+                    var learnRoot = GetTargetAvatarForPlatform(plat);
+                    foreach (var outfit in targetOutfits)
+                    {
+                        bool builds = (plat == VRCPlatform.Android && outfit.BuildAndroid) || (plat == VRCPlatform.iOS && outfit.BuildIOS);
+                        if (builds && NeedsSizeLearningBuild(learnRoot, outfit.BlueprintId, learnTarget))
+                        {
+                            queue.Add($"{outfit.Name}|{outfit.BlueprintId}|{plat}|{LEARNING_STEP}");
+                            learningBuilds++;
+                        }
+                    }
+                }
+
                 foreach (var outfit in targetOutfits)
                 {
                     bool buildsForPlat = 
@@ -2449,6 +2527,7 @@ namespace Synthos.BatchUploader
             SessionState.SetBool(SESSION_PROCEED_ON_ERROR, _proceedOnError);
             SessionState.SetString(SESSION_SKIPPED, "");
             SessionState.SetString(SESSION_SIZE_ADJUSTED, "");
+            SessionState.SetInt(SESSION_LEARNING_BUILDS, learningBuilds);
             SessionState.SetBool(COMPRESSOR_REPORT_READER, true);
             SessionState.SetString(COMPRESSOR_REPORTS, "");
             SessionState.SetString(SESSION_INITIAL_PLATFORM, currentPlatform.ToString());
@@ -2547,6 +2626,35 @@ namespace Synthos.BatchUploader
                     GameObject targetAvatarRoot = GetTargetAvatarForPlatform(platform);
                     if (targetAvatarRoot == null)
                         throw new Exception($"Target avatar root for {platform} is not set.");
+
+                    // --- Learning step: build only, so Avatar Compressor learns this outfit's size ---
+                    if (parts.Length > 3 && parts[3] == LEARNING_STEP)
+                    {
+                        SetStatus($"[{currentIndex + 1}/{total}] Learning upload size for {outfitName} ({platform}) — build only, no upload...", MessageType.Info);
+                        _batchSubProgress = 0.4f;
+                        Repaint();
+                        try
+                        {
+                            if (!VRCSdkControlPanel.TryGetBuilder<IVRCSdkAvatarBuilderApi>(out var learnBuilder))
+                                throw new Exception("SDK Builder not available.");
+                            await learnBuilder.Build(targetAvatarRoot);
+                        }
+                        catch (Exception ex) when (!(ex is OperationCanceledException))
+                        {
+                            // The upload after it still runs; it just plans without what this build would have taught
+                            Debug.LogWarning($"[OutfitBatchUploader] Learning build for '{outfitName}' ({platform}) failed; " +
+                                             $"its upload will plan its size without it: {GetFailureReason(ex)}");
+                        }
+                        // The learning build's size reports are not the upload's
+                        SessionState.SetString(COMPRESSOR_REPORTS, "");
+
+                        _batchSubProgress = 1.0f;
+                        Repaint();
+                        queue.RemoveAt(0);
+                        SessionState.SetString(SESSION_BATCH_QUEUE, string.Join("\n", queue));
+                        SessionState.SetInt(SESSION_BATCH_INDEX, currentIndex + 1);
+                        continue;
+                    }
 
                     // --- Build & Upload Phase ---
                     SetStatus($"[{currentIndex + 1}/{total}] Building & Uploading {outfitName} ({platform}) using {targetAvatarRoot.name}...", MessageType.Info);
@@ -2815,7 +2923,9 @@ namespace Synthos.BatchUploader
 
         private void FinishBatch()
         {
-            int total = SessionState.GetInt(SESSION_BATCH_TOTAL, 0);
+            // Learning steps are builds, not uploads
+            int total = Math.Max(0, SessionState.GetInt(SESSION_BATCH_TOTAL, 0) - SessionState.GetInt(SESSION_LEARNING_BUILDS, 0));
+            SessionState.EraseInt(SESSION_LEARNING_BUILDS);
             string skippedStr = SessionState.GetString(SESSION_SKIPPED, "");
             var skippedList = skippedStr.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
